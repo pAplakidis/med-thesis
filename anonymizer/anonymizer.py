@@ -46,7 +46,7 @@ class Anonymizer:
     anon_ds.IssuerOfPatientID = None
     anon_ds.IssuerOfPatientIDQualifiersSequence = None
 
-    save_path = path.replace(self.root_dir, self.out_path)
+    save_path = path.replace(self.root_dir, self.out_path + '/')
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     anon_ds.save_as(save_path)
 
