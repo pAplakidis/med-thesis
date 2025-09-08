@@ -53,19 +53,17 @@ class ImageExtractor:
 
   def run(self):
     print("[*] Extracting pixel data from DICOM files ...")
-    tqdm_string = ""
     for path in (t := tqdm(self.dicom_files)):
-      tqdm_string = path
       t.set_description(path)
       out_dir = os.path.join(os.path.dirname(path), "images")
       os.makedirs(out_dir, exist_ok=True)
 
       try:
-        self.extract_pixel_data(path, out_dir, tqdm_string)
+        self.extract_pixel_data(path, out_dir)
       except Exception as e:
         print(f"Error processing {path}: {e}")
 
-  def extract_pixel_data(self, path, out_dir, tqdm_string):
+  def extract_pixel_data(self, path, out_dir):
     ds = dcmread(path)
     if 'PixelData' not in ds:
       print(f"Skipping file {path} (no pixel data)")
