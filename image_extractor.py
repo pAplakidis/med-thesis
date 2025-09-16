@@ -8,6 +8,14 @@ from tqdm import tqdm
 import pydicom
 from pydicom import dcmread
 
+WINDOW_PRESETS = {
+    "brain": (40, 80),
+    "bone": (300, 2000),
+    # "lung": (-600, 1500),
+    # "abdomen": (60, 400),
+}
+
+
 class ImageExtractor:
   def __init__(self, root_dir):
     self.root_dir = root_dir
@@ -25,6 +33,17 @@ class ImageExtractor:
       pixel_array = pixel_array * float(ds.RescaleSlope) + float(ds.RescaleIntercept)
     pixel_array = ImageExtractor.apply_window(ds, pixel_array)
     return pixel_array
+
+  @staticmethod
+  def preprocess_monochrome2_custom(ds, pixel_array, out_path):
+    pixel_array = pixel_array.astype(float)
+    if "RescaleSlope" in ds and "RescaleIntercept" in ds:
+      pixel_array = pixel_array * float(ds.RescaleSlope) + float(ds.RescaleIntercept)
+
+    for preset, (center, width) in WINDOW_PRESETS.items():
+      out_path_preset = out_path + f"_{preset}.png"
+      img = ImageExtractor.apply_custom_window(pixel_array, center, width)
+      plt.imsave(out_path_preset, img, cmap="gray")
 
   @staticmethod
   def apply_window(ds, pixel_array):
@@ -51,6 +70,13 @@ class ImageExtractor:
 
     return pixel_array
 
+  def apply_custom_window(pixel_array, center, width):
+    lower = center - width / 2
+    upper = center + width / 2
+    img = np.clip(pixel_array, lower, upper)
+    img = (img - lower) / (upper - lower)
+    return (img * 255).astype(np.uint8)
+
   def run(self):
     print("[*] Extracting pixel data from DICOM files ...")
     for path in (t := tqdm(self.dicom_files)):
@@ -73,7 +99,8 @@ class ImageExtractor:
 
     pi = ds.PhotometricInterpretation # usually MONOCHROME2 or RGB
     if pi == "MONOCHROME2":
-      pixel_array = self.preprocess_monochrome2(ds, pixel_array)
+      # pixel_array = self.preprocess_monochrome2(ds, pixel_array)
+      self.preprocess_monochrome2_custom(ds, pixel_array, out_path)
 
     if pixel_array.ndim > 2:
       # NOTE: all images with pixel array > 2D are RGB reports (skip for now)

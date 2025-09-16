@@ -3,21 +3,21 @@ import os
 import sys
 import cv2
 import json
+import ntpath
 import numpy as np
-import matplotlib.pyplot as plt
 from tqdm import tqdm
 from PIL import Image
 
-colors = {
+rgb_colors = {
     0: (0, 0, 0),          # background
-    1: (128, 0, 0),        # category 1
-    2: (0, 128, 0),        # category 2
-    3: (128, 128, 0),      # category 3
-    4: (0, 0, 128),        # category 4
-    5: (128, 128, 128),    # category 5
-    6: (255, 0, 0),        # category 6
-    7: (0, 255, 0),        # category 7
-    8: (0, 0, 255),        # category 8
+    1: (128, 0, 0),        # category_id 0
+    2: (0, 128, 0),        # category_id 1
+    3: (128, 128, 0),      # category_id 2
+    4: (0, 0, 128),        # category_id 3
+    5: (128, 128, 128),    # category_id 4
+    6: (255, 0, 0),        # category_id 5
+    7: (0, 255, 0),        # category_id 6
+    8: (0, 0, 255),        # category_id 7
 }
 
 
@@ -28,14 +28,13 @@ class MaskExtractor:
     self.result_files = []
     for dirpath, _, filenames in tqdm(os.walk(self.root_dir), desc="[*] Checking for annotation files ..."):
       for filename in filenames:
-        if filename.lower() == "result.json":
+        if filename.lower().startswith("result") and filename.lower().endswith(".json"):
           self.result_files.append(os.path.join(dirpath, filename))
 
   def run(self):
     print("[*] Extracting masks from results.json annotation files ...")
     for path in (t := tqdm(self.result_files)):
       t.set_description(path)
-
       img_dir = os.path.join(os.path.dirname(path), "images")
       out_dir = os.path.join(os.path.dirname(path), "masks")
       os.makedirs(out_dir, exist_ok=True)
@@ -55,7 +54,7 @@ class MaskExtractor:
     for i, img_info in enumerate(coco["images"]):
       img_id = img_info["id"]
       file_name = img_info["file_name"]
-      image_name = os.path.basename(file_name)
+      image_name = ntpath.basename(file_name)
       width, height = img_info["width"], img_info["height"]
       mask = np.zeros((height, width), dtype=np.uint8)
 
@@ -64,11 +63,11 @@ class MaskExtractor:
         cat_id = ann["category_id"]
         for seg in ann["segmentation"]:
           poly = np.array(seg).reshape((-1, 2)).astype(np.int32)
-          cv2.fillPoly(mask, [poly], color=colors[cat_id + 1])
+          cv2.fillPoly(mask, [poly], color=(cat_id+1)*10) # NOTE: x10 so that we can visualize better (/10 to get original category_id)
 
       mask_path = os.path.join(out_dir, image_name)
+      print(image_name, np.unique(mask))
       Image.fromarray(mask).save(mask_path)
-      print(f"Saved mask: {mask_path}")
 
 
 if __name__ == "__main__":
