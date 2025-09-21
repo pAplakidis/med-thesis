@@ -8,18 +8,6 @@ import numpy as np
 from tqdm import tqdm
 from PIL import Image
 
-rgb_colors = {
-    0: (0, 0, 0),          # background
-    1: (128, 0, 0),        # category_id 0
-    2: (0, 128, 0),        # category_id 1
-    3: (128, 128, 0),      # category_id 2
-    4: (0, 0, 128),        # category_id 3
-    5: (128, 128, 128),    # category_id 4
-    6: (255, 0, 0),        # category_id 5
-    7: (0, 255, 0),        # category_id 6
-    8: (0, 0, 255),        # category_id 7
-}
-
 
 class MaskExtractor:
   def __init__(self, root_dir):
