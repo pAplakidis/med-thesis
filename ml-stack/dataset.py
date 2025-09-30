@@ -8,12 +8,14 @@ from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 
 from config import *
-from utils import visualize_ct_with_mask
+from utils import *
 
 
 class CTScanDataset(Dataset):
   def __init__(self, base_dir):
     self.base_dir = base_dir
+    self.num_classes = len(rgb_colors)
+    self.classes = list(rgb_colors.keys())
 
     # find annotated studies
     self.result_files = []
@@ -68,22 +70,22 @@ class CTScanDataset(Dataset):
     return len(self.masks)
 
   def __getitem__(self, idx):
-        # load grayscale image and mask
+    # load grayscale image and mask
     image = Image.open(self.images[idx]).convert("L")   # CT scan image (grayscale)
     mask = Image.open(self.masks[idx]).convert("L")     # segmentation mask (grayscale)
 
     # transforms for CT image
     image_transform = transforms.Compose([
-        transforms.Resize((IMG_SIZE, IMG_SIZE)),    # resize to fixed size
-        transforms.ToTensor(),                      # -> [1,H,W], values in [0,1]
-        transforms.Normalize(mean=[0.5], std=[0.5]) # normalize grayscale
+      transforms.Resize(IMAGE_SIZE),    # resize to fixed size
+      transforms.ToTensor(),                      # -> [1,H,W], values in [0,1]
+      transforms.Normalize(mean=[0.5], std=[0.5]) # normalize grayscale
     ])
 
     # transforms for mask
     mask_transform = transforms.Compose([
-        transforms.Resize((IMG_SIZE, IMG_SIZE), interpolation=Image.NEAREST),  # preserve class IDs
-        transforms.ToTensor(),                                                 # -> [1,H,W], values in [0,1]
-        transforms.Lambda(lambda x: (x * 255).long() // 10)                    # rescale to category IDs
+      transforms.Resize(IMAGE_SIZE, interpolation=Image.NEAREST),  # preserve class IDs
+      transforms.ToTensor(),                                                 # -> [1,H,W], values in [0,1]
+      transforms.Lambda(lambda x: (x * 255).long() // 10)                    # divide by 10 rescale to category IDs
     ])
 
     image = image_transform(image)

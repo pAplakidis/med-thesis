@@ -1,4 +1,6 @@
+import torch
 import numpy as np
+from medpy.metric import binary
 import matplotlib.pyplot as plt
 
 rgb_colors = {
@@ -12,6 +14,58 @@ rgb_colors = {
     7: (0, 255, 0),        # category_id 6
     8: (0, 0, 255),        # category_id 7
 }
+
+def compute_metrics(pred, target, num_classes=len(rgb_colors)):
+  """
+  pred: (N, C, H, W) logits
+  target: (N, H, W) with class indices
+  """
+
+  metrics = {}
+  pred_classes = pred.argmax(dim=1)  # (N, H, W)
+
+  # Pixel accuracy
+  correct = (pred_classes == target).float().sum()
+  total = torch.numel(target)
+  metrics["pixel_acc"] = (correct / total).item()
+
+  ious, dices, f1s, hausdorffs = [], [], [], []
+  for cls in range(num_classes):
+    pred_c = (pred_classes == cls).cpu().numpy()
+    target_c = (target == cls).cpu().numpy()
+
+    # skip absent classes
+    if target_c.sum() == 0 and pred_c.sum() == 0:
+      continue
+
+    # IoU
+    intersection = (pred_c & target_c).sum()
+    union = (pred_c | target_c).sum()
+    iou = intersection / union if union > 0 else 0
+    ious.append(iou)
+
+    # Dice (DSC)
+    dice = 2 * intersection / (pred_c.sum() + target_c.sum() + 1e-8)
+    dices.append(dice)
+
+    # F1 (same as Dice for segmentation, but often separated in reports)
+    f1s.append(dice)
+
+    # Hausdorff Distance (use medpy)
+    try:
+      hd = binary.hd(pred_c, target_c)
+      hausdorffs.append(hd)
+    except Exception:
+      # Hausdorff can fail if one set is empty
+        pass
+
+  # Aggregate (mean per class)
+  metrics["IoU"] = sum(ious) / len(ious) if ious else 0
+  metrics["Dice"] = sum(dices) / len(dices) if dices else 0
+  metrics["F1"] = sum(f1s) / len(f1s) if f1s else 0
+  metrics["Hausdorff"] = sum(hausdorffs) / len(hausdorffs) if hausdorffs else 0
+  return metrics
+
 
 def visualize_ct_with_mask(image, mask, alpha=0.5):
   """
