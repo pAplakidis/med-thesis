@@ -10,7 +10,7 @@ from dataset import *
 from model import *
 from trainer import Trainer
 
-# EXAMPLE USAGE: MODEL_PATH=checkpoints/CILv3D.pt CHECKPOINT=checkpoints/CILv3D_best.py ./train.py
+# EXAMPLE USAGE: MODEL_PATH=checkpoints/model.pt CHECKPOINT=checkpoints/model.pt ./train.py
 
 MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/unet.pt")
 CHECKPOINT = os.getenv("CHECKPOINT", None)

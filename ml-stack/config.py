@@ -1,4 +1,5 @@
-BASE_DATA_DIR = "../anonymizer/anonymized"
+# BASE_DATA_DIR = "../anonymizer/anonymized"
+BASE_DATA_DIR = "../data"
 
 EMA = False
 IMAGE_SIZE = (224, 224)

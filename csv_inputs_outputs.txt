@@ -1,0 +1,56 @@
+- inputs:
+Age
+MECHANISM OF INJURY
+ISOLATED VS MULTI TRAUMA
+HEMODYNAMICAL STATUS (STABLE VS UNSTABLE)
+GCS AT EMERGENCY DEPARTMENT
+PUPIL STATUS
+
+labels (extracted from model outputs, except for CEREBELLAR & CRANIAL BONE INJURY & cervical bone injury)
+TYPE(S) OF INJURY (CT SCAN) => extracted by the vision model
+(NOTE: the following are related to the injury)
+INTRAPARECHYMAL
+INTRAPARECHYMAL SIZE (MM)
+INTRAVENTRICULAR
+SUBDURAL
+SUBDURAL (SIZE MM)
+SAH
+EPIDURAL (SIZE)
+BRAIN STEM
+CEREBELLAR
+CRANIAL BONE INJURY 
+cervical bone injury
+
+PATIENT INTUBATED  EMERGENT (YES/NO)
+PATIENT OPERATED (YES/NO)
+SIGNIFICANT MEDICAL HISTORY (DM, MI, STROKE, CANCER, HF, CKD)
+
+important biomarkers:
+Glc 1
+NLR
+PLR
+SII
+
+ICU CARE
+DAYS IN ICU
+
+
+- inputs + outputs:
+CRANIOTOMY
+CRANIECTOMY
+
+
+- outputs:
+GOS 15 DAYS
+GOS 1 MONTH
+GOS 2 MONTHS
+GOS 6 MONTS
+(NOTE: // means follow up is not relevant, not needed)
+OUTCOME AT DISCHARGE 
+
+
+NOTE for segmentation model: if patient is operated on (see from excel). Ignore BONE (cranial bone injury) class for now (BLUE COLOR, AD)
+if patient has been operated, ignore studies >"1H CT" (e.g. reject 2H CT, etc)
+
+BONE <60 cuts/frames
+60-100 cuts/frames on average
