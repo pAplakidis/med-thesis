@@ -30,28 +30,34 @@ class CTScanDataset(Dataset):
     for res in tqdm(self.result_files, desc="[*] Collecting image and mask folders"):
       self.image_folders.add(os.path.join(os.path.dirname(res), "images"))
       self.mask_folders.add(os.path.join(os.path.dirname(res), "masks"))
-    self.image_folders = list(self.image_folders)
-    self.mask_folders = list(self.mask_folders)
+    self.image_folders = sorted(list(self.image_folders))
+    self.mask_folders = sorted(list(self.mask_folders))
 
-    self.images = [
-      os.path.join(img_folder, img_name)
-      for img_folder in self.image_folders
-      for img_name in os.listdir(img_folder)
-    ]
-    self.masks = [
-      os.path.join(mask_folder, mask_name)
-      for mask_folder in self.mask_folders
-      for mask_name in os.listdir(mask_folder)
-    ]
+    self.images, self.masks = [], []
+    for img_folder in (t := tqdm(self.image_folders)):
+      t.set_description(f"[*] Processing image folder: {os.path.basename(img_folder)}")
+      mask_folder = img_folder.replace("images", "masks")
 
-    # make sure each image has a corresponding mask
-    mask_names = [os.path.basename(mask).split('-')[-1] for mask in self.masks]
-    for i in (t := trange(len(self.images) - 1, -1, -1, desc="[*] Filtering out images without masks")):
-      if os.path.basename(self.images[i]) not in mask_names:
-        del self.images[i]
+      # FIXME: check excel, if patient operated + folder name > 1H CT => exclude from dataset (since we only want pre-op scans)
+      # if operated_on and "1h" not in img_folder.lower():
+      #   continue
+      if not os.path.exists(img_folder.replace("images", "masks")):
+        print("[!] Warning: No corresponding mask folder found for image folder: {}".format(img_folder))
+        continue
+
+      images = os.listdir(img_folder)
+      masks = os.listdir(mask_folder)
+      mask_map = {mask.split('-')[-1]: mask for mask in masks}  # mask file format: id-<original_image_name>
+      for img_name in images:
+        if img_name not in mask_map:
+          continue
+        self.images.append(os.path.join(img_folder, img_name))
+        self.masks.append(os.path.join(mask_folder, mask_map[img_name]))
+
     self.images = sorted(self.images)
     self.masks = sorted(self.masks)
-    assert len(self.images) == len(self.masks), "Number of images and masks must be the same"
+    print(f"[*] Found {len(self.images)} images and {len(self.masks)} masks.")
+    assert len(self.images) == len(self.masks), f"Number of images and masks must be the same: {len(self.images)} != {len(self.masks)}"
 
     # pair images and masks
     # make sure each image has a corresponding mask
@@ -68,6 +74,9 @@ class CTScanDataset(Dataset):
 
   def __len__(self):
     return len(self.masks)
+
+  def get_classes(self):
+    return self.classes
 
   def __getitem__(self, idx):
     # load grayscale image and mask
@@ -92,11 +101,17 @@ class CTScanDataset(Dataset):
     mask = mask_transform(mask).squeeze(0)  # drop channel -> [H,W]
     return image, mask
 
+  def get_class_balance(self):
+    class_counts = {cls: 0 for cls in range(self.num_classes)}
+    for mask_path in tqdm(self.masks, desc="[*] Calculating class balance"):
+      mask = Image.open(mask_path).convert("L")
+      mask_tensor = transforms.ToTensor()(mask).squeeze(0)  # [H,W], values in [0,1]
+      class_ids = (mask_tensor * 255).long() // 10           # rescale to category IDs
+      for cls in range(self.num_classes):
+        class_counts[cls] += (class_ids == cls).sum().item()
+    return class_counts
+
 
 if __name__ == "__main__":
-  dataset = CTScanDataset("../anonymizer/anonymized")
-  for data in dataset:
-    image, mask = data
-    print(image.shape, mask.shape, torch.unique(mask))
-    # if torch.unique(mask).shape[0] > 1:
-    #   visualize_ct_with_mask(image, mask)
+  dataset = CTScanDataset("../data")
+  class_counts = dataset.get_class_balance()

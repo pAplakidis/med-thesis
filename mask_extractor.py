@@ -54,7 +54,7 @@ class MaskExtractor:
           cv2.fillPoly(mask, [poly], color=(cat_id+1)*10) # NOTE: x10 so that we can visualize better (/10 to get original category_id)
 
       mask_path = os.path.join(out_dir, image_name)
-      print(image_name, np.unique(mask))
+      # print(image_name, np.unique(mask))
       Image.fromarray(mask).save(mask_path)
 
 
