@@ -7,8 +7,8 @@ from torch.utils.data import DataLoader, random_split
 
 from config import *
 from dataset import *
-from model import *
 from trainer import Trainer
+from models.unet import UNet
 
 # EXAMPLE USAGE: MODEL_PATH=checkpoints/model.pt CHECKPOINT=checkpoints/model.pt ./train.py
 
@@ -62,8 +62,9 @@ if __name__ == "__main__":
     pin_memory=PIN_MEMORY
   )
 
-  model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
-                          in_channels=1, out_channels=dataset.num_classes, init_features=32, pretrained=False)
+  # model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
+  #                         in_channels=1, out_channels=dataset.num_classes, init_features=32, pretrained=False)
+  model = UNet(in_channels=1, num_classes=len(RGB_COLORS))
   model.to(device)
 
   trainer = Trainer(
