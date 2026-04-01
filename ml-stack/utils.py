@@ -3,7 +3,7 @@ import numpy as np
 from medpy.metric import binary
 import matplotlib.pyplot as plt
 
-rgb_colors = {
+RGB_COLORS = {
     0: (0, 0, 0),          # background
     1: (128, 0, 0),        # category_id 0
     2: (0, 128, 0),        # category_id 1
@@ -15,7 +15,7 @@ rgb_colors = {
     8: (0, 0, 255),        # category_id 7
 }
 
-def compute_metrics(pred, target, num_classes=len(rgb_colors)):
+def compute_metrics(pred, target, num_classes=len(RGB_COLORS)):
   """
   pred: (N, C, H, W) logits
   target: (N, H, W) with class indices
@@ -89,7 +89,7 @@ def visualize_ct_with_mask(image, mask, alpha=0.5):
   # create RGB overlay for mask
   h, w = mask.shape
   mask_rgb = np.zeros((h, w, 3), dtype=np.uint8)
-  for cat_id, color in rgb_colors.items():
+  for cat_id, color in RGB_COLORS.items():
       mask_rgb[mask == cat_id] = color
 
   # blend image and mask

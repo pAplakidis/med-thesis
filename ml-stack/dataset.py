@@ -3,7 +3,6 @@ import os
 from tqdm import tqdm, trange
 from PIL import Image
 
-import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 
@@ -14,8 +13,8 @@ from utils import *
 class CTScanDataset(Dataset):
   def __init__(self, base_dir):
     self.base_dir = base_dir
-    self.num_classes = len(rgb_colors)
-    self.classes = list(rgb_colors.keys())
+    self.num_classes = len(RGB_COLORS)
+    self.classes = list(RGB_COLORS.keys())
 
     # find annotated studies
     self.result_files = []
@@ -102,6 +101,20 @@ class CTScanDataset(Dataset):
     return image, mask
 
   def get_class_balance(self):
+    """Per image class balance"""
+    class_counts = {cls: 0 for cls in range(self.num_classes)}
+    for mask_path in tqdm(self.masks, desc="[*] Calculating class balance"):
+      mask = Image.open(mask_path).convert("L")
+      mask_tensor = transforms.ToTensor()(mask).squeeze(0)  # [H,W], values in [0,1]
+      class_ids = (mask_tensor * 255).long() // 10           # rescale to category IDs
+      for cls in torch.unique(class_ids):
+        cls = cls.item()
+        if cls < self.num_classes:
+          class_counts[cls] += 1
+    return class_counts
+
+  def get_class_balance_per_pixel(self):
+    """Per pixel class balance across the dataset (total pixels belonging to each class)"""
     class_counts = {cls: 0 for cls in range(self.num_classes)}
     for mask_path in tqdm(self.masks, desc="[*] Calculating class balance"):
       mask = Image.open(mask_path).convert("L")
