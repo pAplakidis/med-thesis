@@ -15,10 +15,11 @@ RGB_COLORS = {
     8: (0, 0, 255),        # category_id 7
 }
 
-def compute_metrics(pred, target, num_classes=len(RGB_COLORS)):
+def compute_metrics(pred, target, num_classes=len(RGB_COLORS), weights=None):
   """
   pred: (N, C, H, W) logits
   target: (N, H, W) with class indices
+  weights: optional (C,) tensor for weighted aggregation
   """
 
   metrics = {}
@@ -29,41 +30,64 @@ def compute_metrics(pred, target, num_classes=len(RGB_COLORS)):
   total = torch.numel(target)
   metrics["pixel_acc"] = (correct / total).item()
 
-  ious, dices, f1s, hausdorffs = [], [], [], []
+  per_class = {"IoU": [], "Dice": [], "F1": [], "Hausdorff": [], "counts": []}
   for cls in range(num_classes):
     pred_c = (pred_classes == cls).cpu().numpy()
     target_c = (target == cls).cpu().numpy()
 
+    target_count = target_c.sum()
+    pred_count = pred_c.sum()
+
     # skip absent classes
-    if target_c.sum() == 0 and pred_c.sum() == 0:
+    if target_count == 0 and pred_count == 0:
       continue
 
     # IoU
     intersection = (pred_c & target_c).sum()
     union = (pred_c | target_c).sum()
     iou = intersection / union if union > 0 else 0
-    ious.append(iou)
 
     # Dice (DSC)
-    dice = 2 * intersection / (pred_c.sum() + target_c.sum() + 1e-8)
-    dices.append(dice)
-
-    # F1 (same as Dice for segmentation, but often separated in reports)
-    f1s.append(dice)
+    dice = 2 * intersection / (pred_count + target_count + 1e-8)
 
     # Hausdorff Distance (use medpy)
+    hd = None
     try:
       hd = binary.hd(pred_c, target_c)
-      hausdorffs.append(hd)
     except Exception:
-      # Hausdorff can fail if one set is empty
-        pass
+      pass
 
-  # Aggregate (mean per class)
-  metrics["IoU"] = sum(ious) / len(ious) if ious else 0
-  metrics["Dice"] = sum(dices) / len(dices) if dices else 0
-  metrics["F1"] = sum(f1s) / len(f1s) if f1s else 0
-  metrics["Hausdorff"] = sum(hausdorffs) / len(hausdorffs) if hausdorffs else 0
+    per_class["IoU"].append(iou)
+    per_class["Dice"].append(dice)
+    per_class["F1"].append(dice)
+    per_class["Hausdorff"].append(hd if hd is not None else 0.0)
+    per_class["counts"].append(target_count)
+
+  counts = torch.tensor(per_class["counts"], dtype=torch.float32)
+  if weights is not None:
+    w = weights[:len(counts)].float()
+  else:
+    w = counts
+
+  w_sum = w.sum()
+  if w_sum > 0:
+    w_norm = w / w_sum
+  else:
+    w_norm = torch.ones(len(counts)) / len(counts) if len(counts) > 0 else torch.tensor([1.0])
+
+  metrics["IoU"] = sum(per_class["IoU"]) / len(per_class["IoU"]) if per_class["IoU"] else 0
+  metrics["Dice"] = sum(per_class["Dice"]) / len(per_class["Dice"]) if per_class["Dice"] else 0
+  metrics["F1"] = sum(per_class["F1"]) / len(per_class["F1"]) if per_class["F1"] else 0
+  metrics["Hausdorff"] = sum(per_class["Hausdorff"]) / len(per_class["Hausdorff"]) if per_class["Hausdorff"] else 0
+
+  if len(per_class["IoU"]) > 0:
+    metrics["w_IoU"] = sum(w_norm[i].item() * v for i, v in enumerate(per_class["IoU"]))
+    metrics["w_Dice"] = sum(w_norm[i].item() * v for i, v in enumerate(per_class["Dice"]))
+    metrics["w_F1"] = sum(w_norm[i].item() * v for i, v in enumerate(per_class["F1"]))
+    metrics["w_Hausdorff"] = sum(w_norm[i].item() * v for i, v in enumerate(per_class["Hausdorff"]))
+  else:
+    metrics["w_IoU"] = metrics["w_Dice"] = metrics["w_F1"] = metrics["w_Hausdorff"] = 0
+
   return metrics
 
 

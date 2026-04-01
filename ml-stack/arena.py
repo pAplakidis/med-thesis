@@ -83,20 +83,105 @@ def load_image_and_mask(_dataset, idx):
 
   return image, mask
 
-# for modele selector
-def discover_models(model_dir):
-  if not model_dir or not os.path.exists(model_dir):
-    return []
+def discover_models(checkpoints_dir):
+  if not checkpoints_dir or not os.path.exists(checkpoints_dir):
+    return {}
 
-  models = []
-  for f in os.listdir(model_dir):
-    if f.endswith(".pt") or f.endswith(".pth"):
-      models.append(os.path.join(model_dir, f))
-  return models
+  hierarchy = {}
+  for experiment in sorted(os.listdir(checkpoints_dir)):
+    exp_path = os.path.join(checkpoints_dir, experiment)
+    if not os.path.isdir(exp_path):
+      continue
+    versions = []
+    for f in sorted(os.listdir(exp_path)):
+      if f.endswith(".pt") or f.endswith(".pth"):
+        versions.append(f)
+    if versions:
+      hierarchy[experiment] = versions
+  return hierarchy
 
-def load_model(path):
-  # placeholder for future
-  return torch.load(path, map_location="cpu")
+@st.cache_resource
+def load_model(checkpoints_dir, experiment, version):
+  from models.unet import UNet
+  model_path = os.path.join(checkpoints_dir, experiment, version)
+
+  try:
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+  except Exception as e:
+    st.error(f"Failed to load model: {e}")
+    return None
+
+  state_dict = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
+
+  num_classes = None
+  for key, val in state_dict.items():
+    if "final.weight" in key or "final.bias" in key:
+      if "weight" in key:
+        num_classes = val.shape[0]
+      break
+
+  if num_classes is None:
+    st.error("Could not determine num_classes from model checkpoint")
+    return None
+
+  try:
+    model = UNet(in_channels=1, num_classes=num_classes)
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
+  except Exception as e:
+    st.error(f"Failed to initialize model: {e}")
+    return None
+
+def discover_runs(runs_dir="runs"):
+  if not runs_dir or not os.path.exists(runs_dir):
+    return {}
+
+  runs = {}
+  for run_name in sorted(os.listdir(runs_dir)):
+    run_path = os.path.join(runs_dir, run_name)
+    if not os.path.isdir(run_path):
+      continue
+    model_name = run_name.split("-")[0]
+    if model_name not in runs:
+      runs[model_name] = []
+    runs[model_name].append(run_name)
+  return runs
+
+def get_final_val_loss(runs_dir, run_name):
+  try:
+    from torch.utils.tensorboard import SummaryWriter
+    from tensorboard.backend.event_processing import event_accumulator
+    run_path = os.path.join(runs_dir, run_name)
+    ea = event_accumulator.EventAccumulator(run_path)
+    ea.Reload()
+    val_scalars = ea.Scalars("epoch validation/loss")
+    if val_scalars:
+      return val_scalars[-1].value
+    train_scalars = ea.Scalars("epoch training/loss")
+    if train_scalars:
+      return train_scalars[-1].value
+  except Exception:
+    pass
+  return None
+
+def get_model_final_loss(checkpoints_dir, experiment, version):
+  model_name = version.split(".")[0]
+  runs = discover_runs()
+  if model_name not in runs:
+    return None
+  latest_run = runs[model_name][-1]
+  return get_final_val_loss("runs", latest_run)
+
+def predict_with_model(model, image):
+  if model is None:
+    return None
+  device = next(model.parameters()).device
+  with torch.no_grad():
+    x = torch.from_numpy(image).unsqueeze(0).unsqueeze(0).float().to(device)
+    out = model(x)
+    pred = out.argmax(dim=1).squeeze(0).cpu().numpy()
+  return pred
 
 # UI components
 def render_class_balance(balance):
@@ -149,7 +234,7 @@ def render_image_view(image, mask):
     st.image(to_pil(image), width="stretch")
 
   with col2:
-    st.subheader("Mask")
+    st.subheader("Ground Truth")
     st.image(to_pil(colorize_mask(mask)), width="stretch")
 
   with col3:
@@ -232,13 +317,25 @@ def sidebar_controls(dataset, presence_map):
   st.sidebar.title("Controls")
 
   # model section
-  model_dir = st.sidebar.text_input("Model Directory (optional)")
-  model_paths = discover_models(model_dir)
+  checkpoints_dir = st.sidebar.text_input("Checkpoints Directory (optional)", "checkpoints")
+  model_hierarchy = discover_models(checkpoints_dir)
 
-  selected_models = st.sidebar.multiselect(
-    "Select Models",
-    options=model_paths
+  selected_experiments = st.sidebar.multiselect(
+    "Select Experiments",
+    options=list(model_hierarchy.keys())
   )
+
+  selected_models = []
+  model_map = {}
+  for experiment in selected_experiments:
+    selected_versions = st.sidebar.multiselect(
+      f"Versions: {experiment}",
+      options=model_hierarchy[experiment]
+    )
+    for version in selected_versions:
+      label = f"{experiment}/{version}"
+      selected_models.append(label)
+      model_map[label] = (experiment, version)
 
   st.sidebar.markdown("---")  # separator
 
@@ -251,20 +348,11 @@ def sidebar_controls(dataset, presence_map):
 
   # filter images
   filtered_indices = filter_indices(dataset, presence_map, selected_classes)
-  # filtered_indices = []
-  # for idx, img_path in enumerate(dataset.images):
-  #   if not selected_classes:
-  #     filtered_indices.append(idx)
-  #     continue
-
-  #   present = presence_map[img_path]
-  #   if any(cls in present for cls in selected_classes):
-  #     filtered_indices.append(idx)
 
   # file list
   selected_idx = sidebar_image_selector(dataset, filtered_indices)
 
-  return selected_idx, selected_models
+  return selected_idx, checkpoints_dir, selected_models, model_map
 
 def main():
   st.title("CT Scan Arena")
@@ -279,7 +367,7 @@ def main():
   presence_map = compute_mask_class_presence(dataset)
 
   # sidebar (left)
-  selected_idx, selected_models = sidebar_controls(dataset, presence_map)
+  selected_idx, checkpoints_dir, selected_models, model_map = sidebar_controls(dataset, presence_map)
   if selected_idx is None:
     st.warning("No image selected")
     return
@@ -292,11 +380,24 @@ def main():
 
     st.divider()
 
-    # TODO: model predictions
+    # model predictions
     if selected_models:
-      st.subheader("Model Predictions (coming soon)")
-      for model_path in selected_models:
-        st.write(f"Loaded: {os.path.basename(model_path)}")
+      st.subheader("Model Predictions")
+      for model_label in selected_models:
+        experiment, version = model_map[model_label]
+        model = load_model(checkpoints_dir, experiment, version)
+        if model is not None:
+          pred = predict_with_model(model, image)
+          if pred is not None:
+            final_loss = get_model_final_loss(checkpoints_dir, experiment, version)
+            loss_suffix = f" (val loss: {final_loss:.4f})" if final_loss is not None else ""
+            col1, col2 = st.columns(2)
+            with col1:
+              st.subheader(f"{model_label}{loss_suffix}")
+              st.image(to_pil(colorize_mask(pred)), width="stretch")
+            with col2:
+              st.subheader(f"{model_label} (Overlay)")
+              st.image(to_pil(overlay_mask(image, pred)), width="stretch")
 
   # RIGHT: stats + legend
   with right_col:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import numpy as np
 from tqdm import tqdm, trange
 from PIL import Image
 
@@ -69,6 +70,21 @@ class CTScanDataset(Dataset):
     self.images, self.masks = zip(*paired)
     self.images, self.masks = list(self.images), list(self.masks)
     print("[+] Found {} image-mask pairs".format(len(self.images)))
+
+    # TODO: include some empty masks for better class balance
+    # filter out masks with only background (class 0)
+    print("[*] Filtering out empty masks...")
+    filtered_images, filtered_masks = [], []
+    for img, mask in zip(self.images, self.masks):
+      m = Image.open(mask).convert("L")
+      m = np.array(m)
+      class_ids = (m // 10).astype(np.int64)
+      if np.any(class_ids > 0):
+        filtered_images.append(img)
+        filtered_masks.append(mask)
+    self.images, self.masks = filtered_images, filtered_masks
+    print(f"[+] Kept {len(self.images)} pairs with at least one foreground class")
+
     print("[+] Dataset initialized.")
 
   def __len__(self):

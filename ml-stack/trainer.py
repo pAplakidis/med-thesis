@@ -25,7 +25,8 @@ class Trainer:
     eval_epoch = False,
     skip_training = False,
     save_checkpoints = False,
-    early_stopping = True
+    early_stopping = True,
+    dataset = None
   ):
     self.device = device
     self.model = model
@@ -41,7 +42,21 @@ class Trainer:
     self.ema_model = None
     self.early_stopping = early_stopping
 
-    self.loss_func = nn.CrossEntropyLoss()  # TODO: weights depending on class balance
+    # compute class weights from per-pixel class balance
+    if dataset is not None:
+      pixel_counts = dataset.get_class_balance_per_pixel()
+      total_pixels = sum(pixel_counts.values())
+      num_classes = len(pixel_counts)
+      weights = torch.tensor([
+        total_pixels / (num_classes * pixel_counts[cls]) if pixel_counts[cls] > 0 else 0.0
+        for cls in range(num_classes)
+      ], dtype=torch.float32).to(device)
+      print("[*] Class weights:", weights.cpu().numpy())
+    else:
+      weights = None
+
+    self.loss_func = nn.CrossEntropyLoss(weight=weights)
+    self.class_weights = weights
     self.optim = torch.optim.AdamW(self.model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', factor=LR_FACTOR, patience=LR_PATIENCE)
     if EMA:
@@ -69,6 +84,10 @@ class Trainer:
       "Dice": [],
       "F1": [],
       "Hausdorff": [],
+      "w_IoU": [],
+      "w_Dice": [],
+      "w_F1": [],
+      "w_Hausdorff": [],
     }
     self.val_metrics = {
       "loss": [],
@@ -77,6 +96,10 @@ class Trainer:
       "Dice": [],
       "F1": [],
       "Hausdorff": [],
+      "w_IoU": [],
+      "w_Dice": [],
+      "w_F1": [],
+      "w_Hausdorff": [],
     }
 
   def save_checkpoint(self, epoch, step, vstep, min_loss, stop_cnt, best=False):
@@ -148,7 +171,7 @@ class Trainer:
     optim.zero_grad()
 
     loss = self.loss_func(out, Y)
-    metrics = compute_metrics(out.detach(), Y.detach())
+    metrics = compute_metrics(out.detach(), Y.detach(), weights=self.class_weights)
     loss.backward()
     optim.step()
     # if self.scheduler: self.scheduler.step()
@@ -162,6 +185,10 @@ class Trainer:
       "Dice": metrics["Dice"],
       "F1": metrics["F1"],
       "Hausdorff": metrics["Hausdorff"],
+      "w_IoU": metrics["w_IoU"],
+      "w_Dice": metrics["w_Dice"],
+      "w_F1": metrics["w_F1"],
+      "w_Hausdorff": metrics["w_Hausdorff"],
     }
     self.log_scalars(
       "running train",
@@ -189,6 +216,10 @@ class Trainer:
           "Dice": [],
           "F1": [],
           "Hausdorff": [],
+          "w_IoU": [],
+          "w_Dice": [],
+          "w_F1": [],
+          "w_Hausdorff": [],
         }
         self.epoch_val_metrics = {
           "loss": [],
@@ -197,6 +228,10 @@ class Trainer:
           "Dice": [],
           "F1": [],
           "Hausdorff": [],
+          "w_IoU": [],
+          "w_Dice": [],
+          "w_F1": [],
+          "w_Hausdorff": [],
         }
 
         self.model.train()
@@ -241,7 +276,7 @@ class Trainer:
     out = self.ema_model(X) if EMA else self.model(X)
 
     loss = self.loss_func(out, Y).mean()
-    metrics = compute_metrics(out.detach(), Y.detach())
+    metrics = compute_metrics(out.detach(), Y.detach(), weights=self.class_weights)
 
     current_metrics = {
       "loss": loss.item(),
@@ -250,6 +285,10 @@ class Trainer:
       "Dice": metrics["Dice"],
       "F1": metrics["F1"],
       "Hausdorff": metrics["Hausdorff"],
+      "w_IoU": metrics["w_IoU"],
+      "w_Dice": metrics["w_Dice"],
+      "w_F1": metrics["w_F1"],
+      "w_Hausdorff": metrics["w_Hausdorff"],
     }
     self.log_scalars(
       "running val",

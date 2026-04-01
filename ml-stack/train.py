@@ -70,6 +70,6 @@ if __name__ == "__main__":
   trainer = Trainer(
     device, model, MODEL_PATH, train_loader, val_loader,
     checkpoint_path=CHECKPOINT, writer_path=WRITER_PATH, eval_epoch=True,
-    save_checkpoints=True, early_stopping=True
+    save_checkpoints=True, early_stopping=True, dataset=dataset
   )
   trainer.train()
