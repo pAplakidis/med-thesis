@@ -1,6 +1,9 @@
-.*.swp
+**/.*.swp
 **/.DS_Store
 **/__pycache__/
 **/.vscode/
+**/*.pkl
+
 data/
 anonymizer/anonymized/
+AGENTS.md
