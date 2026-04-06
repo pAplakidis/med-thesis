@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import os
-from pathlib import Path
-import torch
 import pickle
 import numpy as np
 import streamlit as st
+import onnxruntime as ort
 from PIL import Image
 from tqdm import tqdm
+from pathlib import Path
 
 from dataset import CTScanDataset
 from utils import RGB_COLORS
@@ -14,6 +14,11 @@ from utils import RGB_COLORS
 # run:  streamlit run arena.py
 # or:   streamlit run arena.py --server.address 0.0.0.0 --server.port 8501
 
+# epidural hematoma (EDH)
+# subdural hematoma (SDH)
+# intraventricular hemorrhage (IVH)
+# subarachnoid hemorrhage (SAH)
+# intraparenchymal hemorrhage (IPH)
 CLASS_NAMES = [
   "BACKGROUND",
   "BONE",
@@ -76,12 +81,12 @@ def load_image_and_mask(_dataset, idx):
   image, mask = _dataset[idx]
 
   # denormalize image
-  image = image * 0.5 + 0.5
-  image = image.squeeze().numpy()
+  disp_image = image * 0.5 + 0.5
+  disp_image = image.squeeze().numpy()
 
-  mask = mask.numpy()
+  disp_mask = mask.numpy()
 
-  return image, mask
+  return disp_image, disp_mask, image, mask
 
 def discover_models(checkpoints_dir):
   if not checkpoints_dir or not os.path.exists(checkpoints_dir):
@@ -95,42 +100,26 @@ def discover_models(checkpoints_dir):
     versions = []
     for f in sorted(os.listdir(exp_path)):
       if f.endswith(".pt") or f.endswith(".pth"):
-        versions.append(f)
+        onnx_path = os.path.splitext(f)[0] + ".onnx"
+        if os.path.exists(os.path.join(exp_path, onnx_path)):
+          versions.append(f)
     if versions:
       hierarchy[experiment] = versions
   return hierarchy
 
 @st.cache_resource
-def load_model(checkpoints_dir, experiment, version):
-  from models.unet import UNet
-  model_path = os.path.join(checkpoints_dir, experiment, version)
+def load_model(checkpoints_dir, _dataset, experiment, version):
+  onnx_path = os.path.join(checkpoints_dir, experiment, os.path.splitext(version)[0] + ".onnx")
 
-  try:
-    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
-  except Exception as e:
-    st.error(f"Failed to load model: {e}")
-    return None
-
-  state_dict = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
-
-  num_classes = None
-  for key, val in state_dict.items():
-    if "final.weight" in key or "final.bias" in key:
-      if "weight" in key:
-        num_classes = val.shape[0]
-      break
-
-  if num_classes is None:
-    st.error("Could not determine num_classes from model checkpoint")
+  if not os.path.exists(onnx_path):
+    st.error(f"ONNX model not found: {onnx_path}")
     return None
 
   try:
-    model = UNet(in_channels=1, num_classes=num_classes)
-    model.load_state_dict(state_dict)
-    model.eval()
-    return model
+    session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+    return session
   except Exception as e:
-    st.error(f"Failed to initialize model: {e}")
+    st.error(f"Failed to load ONNX model: {e}")
     return None
 
 def discover_runs(runs_dir="runs"):
@@ -176,11 +165,10 @@ def get_model_final_loss(checkpoints_dir, experiment, version):
 def predict_with_model(model, image):
   if model is None:
     return None
-  device = next(model.parameters()).device
-  with torch.no_grad():
-    x = torch.from_numpy(image).unsqueeze(0).unsqueeze(0).float().to(device)
-    out = model(x)
-    pred = out.argmax(dim=1).squeeze(0).cpu().numpy()
+  input_np = image.unsqueeze(0).numpy().astype(np.float32)
+  input_name = model.get_inputs()[0].name
+  out = model.run(None, {input_name: input_np})[0]
+  pred = np.argmax(out, axis=1).squeeze(0)
   return pred
 
 # UI components
@@ -375,7 +363,7 @@ def main():
   # 👉 main layout with right panel
   main_col, right_col = st.columns([3, 1])
   with main_col:
-    image, mask = load_image_and_mask(dataset, selected_idx)
+    image, mask, t_image, t_mask  = load_image_and_mask(dataset, selected_idx)
     render_image_view(image, mask)
 
     st.divider()
@@ -385,9 +373,9 @@ def main():
       st.subheader("Model Predictions")
       for model_label in selected_models:
         experiment, version = model_map[model_label]
-        model = load_model(checkpoints_dir, experiment, version)
+        model = load_model(checkpoints_dir, dataset, experiment, version)
         if model is not None:
-          pred = predict_with_model(model, image)
+          pred = predict_with_model(model, t_image)
           if pred is not None:
             final_loss = get_model_final_loss(checkpoints_dir, experiment, version)
             loss_suffix = f" (val loss: {final_loss:.4f})" if final_loss is not None else ""

@@ -65,7 +65,7 @@ class Trainer:
         multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.999)
       )
 
-    self.start_epoch, self.step, self.vstep, self.min_epoch_vloss, self.stop_cnt = self.load_checkpoint(self.checkpoint_path)
+    self.start_epoch, self.step, self.vstep, self.min_epoch_vloss, self.stop_cnt, self.writer = self.load_checkpoint(self.checkpoint_path)
     self.start_epoch += 1 # resume from the next epoch
 
     if not writer_path:
@@ -102,6 +102,21 @@ class Trainer:
       "w_Hausdorff": [],
     }
 
+  def save_onnx(self, example_input: torch.Tensor):
+    onnx_path = self.model_path.split(".")[0] + ".onnx"
+    torch.onnx.export(
+      self.model,
+      example_input.to(self.device),
+      onnx_path,
+      export_params=True,
+      opset_version=11,
+      do_constant_folding=True,
+      input_names=["image"],
+      output_names=["mask"],
+    )
+    print(f"[+] ONNX model saved at {onnx_path}.")
+    return onnx_path
+
   def save_checkpoint(self, epoch, step, vstep, min_loss, stop_cnt, best=False):
     chpt_path = self.model_path.split(".")[0] + f"_best.pt" if best else self.model_path.split(".")[0] + ".pt"
     checkpoint = {
@@ -113,6 +128,7 @@ class Trainer:
       "model": self.ema_model.module.state_dict() if EMA else self.model.state_dict(),
       "optimizer": self.optim.state_dict(),
       "scheduler": self.scheduler.state_dict() if self.scheduler else None,
+      "writer": self.writer_path,
     }
     torch.save(checkpoint, chpt_path)
     print(f"[+] Checkpoint saved at {chpt_path}. New min eval loss {min_loss}")
@@ -146,9 +162,11 @@ class Trainer:
     vstep = checkpoint.get("vstep", 0)
     min_loss = checkpoint.get("min_loss", float("inf"))
     stop_cnt = checkpoint.get("stop_cnt", 0)
+    if self.checkpoint_path:
+      writer = checkpoint.get("writer", self.writer)
 
     print(f"[+] Resumed from checkpoint {chpt_path} (epoch {epoch})")
-    return epoch, step, vstep, min_loss, stop_cnt
+    return epoch, step, vstep, min_loss, stop_cnt, writer
 
   def log_scalars(
       self,
@@ -260,6 +278,7 @@ class Trainer:
           min_epoch_vloss = avg_epoch_vloss
           stop_cnt = 0
           self.save_checkpoint(epoch, step, vstep, min_epoch_vloss, stop_cnt, best=True)
+          self.save_onnx(example_input=sample_batched[0][:1])
         else:
           stop_cnt += 1
           if self.early_stopping and stop_cnt >= EARLY_STOP_EPOCHS:

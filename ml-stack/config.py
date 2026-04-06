@@ -3,6 +3,8 @@ BASE_DATA_DIR = "../data"
 
 EMA = False
 IMAGE_SIZE = (224, 224)
+NORM_MEAN = 0.5
+NORM_STD = 0.5
 
 TRAIN_SIZE = 0.7
 VAL_SIZE = 1 - TRAIN_SIZE

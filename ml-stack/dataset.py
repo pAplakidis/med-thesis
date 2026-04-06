@@ -102,7 +102,7 @@ class CTScanDataset(Dataset):
     image_transform = transforms.Compose([
       transforms.Resize(IMAGE_SIZE),    # resize to fixed size
       transforms.ToTensor(),                      # -> [1,H,W], values in [0,1]
-      transforms.Normalize(mean=[0.5], std=[0.5]) # normalize grayscale
+      transforms.Normalize(mean=[NORM_MEAN], std=[NORM_STD]) # normalize grayscale
     ])
 
     # transforms for mask
