@@ -9,6 +9,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+import generate_report
 from config import *
 from utils import *
 
@@ -35,6 +36,7 @@ class Trainer:
     self.val_loader = val_loader
     self.checkpoint_path = checkpoint_path
     self.writer_path = writer_path
+    self.writer = None
     self.eval_epoch = eval_epoch
     self.skip_training = skip_training
     self.save_checkpoints = save_checkpoints
@@ -68,13 +70,14 @@ class Trainer:
     self.start_epoch, self.step, self.vstep, self.min_epoch_vloss, self.stop_cnt, self.writer = self.load_checkpoint(self.checkpoint_path)
     self.start_epoch += 1 # resume from the next epoch
 
-    if not writer_path:
-      today = str(datetime.now()).replace(" ", "_")
-      auto_name = "-".join([model_path.split('/')[-1].split('.')[0], today, f"lr_{LR}", f"bs_{BATCH_SIZE}"])
-      writer_path = str("runs/" + auto_name).replace(":", "_").replace(".", "_")
-      self.writer = SummaryWriter(writer_path)
-    else:
-      self.writer = SummaryWriter(writer_path, purge_step=cast(int, None), max_queue=10, flush_secs=30)
+    if not self.writer:
+      if not writer_path:
+        today = str(datetime.now()).replace(" ", "_")
+        auto_name = "-".join([model_path.split('/')[-1].split('.')[0], today, f"lr_{LR}", f"bs_{BATCH_SIZE}"])
+        writer_path = str("runs/" + auto_name).replace(":", "_").replace(".", "_")
+        self.writer = SummaryWriter(writer_path)
+      else:
+        self.writer = SummaryWriter(writer_path, purge_step=cast(int, None), max_queue=10, flush_secs=30)
     print("[*] Tensorboard output path:", writer_path)
 
     self.train_metrics = {
@@ -103,19 +106,19 @@ class Trainer:
     }
 
   def save_onnx(self, example_input: torch.Tensor):
-    onnx_path = self.model_path.split(".")[0] + ".onnx"
+    self.onnx_path = self.model_path.split(".")[0] + ".onnx"
     torch.onnx.export(
       self.model,
       example_input.to(self.device),
-      onnx_path,
+      self.onnx_path,
       export_params=True,
-      opset_version=11,
+      opset_version=18,
       do_constant_folding=True,
       input_names=["image"],
       output_names=["mask"],
     )
-    print(f"[+] ONNX model saved at {onnx_path}.")
-    return onnx_path
+    print(f"[+] ONNX model saved at {self.onnx_path}.")
+    return self.onnx_path
 
   def save_checkpoint(self, epoch, step, vstep, min_loss, stop_cnt, best=False):
     chpt_path = self.model_path.split(".")[0] + f"_best.pt" if best else self.model_path.split(".")[0] + ".pt"
@@ -131,12 +134,14 @@ class Trainer:
       "writer": self.writer_path,
     }
     torch.save(checkpoint, chpt_path)
-    print(f"[+] Checkpoint saved at {chpt_path}. New min eval loss {min_loss}")
+    print(f"[+] Checkpoint saved at {chpt_path}.")
+    if best:
+      print(f"[+] New min eval loss {min_loss}")
 
   def load_checkpoint(self, chpt_path):
     if chpt_path is None or not os.path.exists(chpt_path):
       print(f"[!] No checkpoint found at {chpt_path}")
-      return -1, 0, 0, float("inf"), 0
+      return -1, 0, 0, float("inf"), 0, None
 
     checkpoint = torch.load(chpt_path, map_location=self.device)
 
@@ -162,8 +167,7 @@ class Trainer:
     vstep = checkpoint.get("vstep", 0)
     min_loss = checkpoint.get("min_loss", float("inf"))
     stop_cnt = checkpoint.get("stop_cnt", 0)
-    if self.checkpoint_path:
-      writer = checkpoint.get("writer", self.writer)
+    writer = checkpoint.get("writer", self.writer)
 
     print(f"[+] Resumed from checkpoint {chpt_path} (epoch {epoch})")
     return epoch, step, vstep, min_loss, stop_cnt, writer
@@ -288,6 +292,8 @@ class Trainer:
       print("[*] Training interrupted. Saving model...")
 
     print("[+] Training done")
+    print("[*] Generating report ...")
+    generate_report.main(self.onnx_path, f"reports/{self.model_path.split('.')[0].replace("checkpoints/", '')}.json", dataset=self.train_loader.dataset.dataset if isinstance(self.train_loader.dataset, torch.utils.data.Subset) else self.train_loader.dataset)
 
   def eval_step(self, t, vstep, sample_batched):
     X = sample_batched[0].to(self.device)

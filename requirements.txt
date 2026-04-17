@@ -2,3 +2,5 @@ numpy
 tqdm
 pydicom
 matplotlib
+thop
+plotly
