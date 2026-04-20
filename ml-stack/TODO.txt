@@ -1,6 +1,0 @@
-Reporter:
-- read all checkpoints
-- show configurations
-- show metrics
-- compare models
-- deep evaluation (per class accuracy, etc)
