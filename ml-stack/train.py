@@ -9,8 +9,7 @@ from iterstrat.ml_stratifiers import MultilabelStratifiedShuffleSplit
 from config import *
 from dataset import *
 from trainer import Trainer
-from models.unet import UNet
-
+from models.unet import UNet, PRESETS
 
 # EXAMPLE USAGE: MODEL_PATH=checkpoints/model.pt CHECKPOINT=checkpoints/model.pt ./train.py
 
@@ -21,6 +20,7 @@ WRITER_PATH = os.getenv("WRITER_PATH", None)
 N_WORKERS = psutil.cpu_count(logical=False)
 PREFETCH_FACTOR = psutil.cpu_count(logical=False) // 2
 PIN_MEMORY = not EMA
+EARLY_STOP = False
 
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -68,12 +68,12 @@ if __name__ == "__main__":
 
   # model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
   #                         in_channels=1, out_channels=dataset.num_classes, init_features=32, pretrained=False)
-  model = UNet(in_channels=1, num_classes=len(RGB_COLORS))
+  model = UNet(PRESETS["unet_base"].to_config())
   model.to(device)
 
   trainer = Trainer(
     device, model, MODEL_PATH, train_loader, val_loader,
     checkpoint_path=CHECKPOINT, writer_path=WRITER_PATH, eval_epoch=True,
-    save_checkpoints=True, early_stopping=True, dataset=dataset
+    save_checkpoints=True, early_stopping=EARLY_STOP, dataset=dataset
   )
   trainer.train()
