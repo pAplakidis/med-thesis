@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 import os
 import psutil
+import numpy as np
 import torch
-from torch.utils.data import DataLoader, random_split
-# from sklearn.model_selection import StratifiedShuffleSplit
+from torch.utils.data import DataLoader, random_split, Subset
+from iterstrat.ml_stratifiers import MultilabelStratifiedShuffleSplit
 
 from config import *
 from dataset import *
 from trainer import Trainer
 from models.unet import UNet
+
 
 # EXAMPLE USAGE: MODEL_PATH=checkpoints/model.pt CHECKPOINT=checkpoints/model.pt ./train.py
 
@@ -30,20 +32,22 @@ if __name__ == "__main__":
   print("[+] Using device:", device)
 
   os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-  print("\n[*] Configuration:")
+  print("\n[*] Train configuration:")
   print(f"Model path: {MODEL_PATH}")
   print(f"Checkpoint path: {CHECKPOINT}")
-  print(f"Epochs: {EPOCHS} - Batch size: {BATCH_SIZE} - Learning rate: {LR} - Weight decay: {WEIGHT_DECAY}")
   print(f"Number of workers: {N_WORKERS} - Prefetch factor: {PREFETCH_FACTOR}")
   print(f"EMA: {EMA} - Pin memory: {PIN_MEMORY}")
   print()
 
   dataset = CTScanDataset(BASE_DATA_DIR)
+  labels = dataset.get_multilabel_targets()
+  msss = MultilabelStratifiedShuffleSplit(n_splits=1, test_size=VAL_SIZE,random_state=42)
+  train_idx, val_idx = next(msss.split(np.zeros(len(labels)), labels))
+  train_set = Subset(dataset, train_idx)
+  val_set = Subset(dataset, val_idx)
   train_size = int(TRAIN_SIZE * len(dataset))
   val_size = len(dataset) - train_size
-  # sss = StratifiedShuffleSplit(n_splits=1, test_size=VAL_SIZE, random_state=42)
-  # train_idx, val_idx = next(sss.split(np.zeros(dataset.num_classes), dataset.classes))
-  train_set, val_set = random_split(dataset, [train_size, val_size])  # FIXME: no class balance
+  # train_set, val_set = random_split(dataset, [train_size, val_size])
 
   train_loader =  DataLoader(
     train_set,

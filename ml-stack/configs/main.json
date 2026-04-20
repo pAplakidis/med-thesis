@@ -1,0 +1,16 @@
+{
+  "ema": false,
+  "image_size": 224,
+  "norm_mean": 0.5,
+  "norm_std": 0.5,
+
+  "train_size": 0.7,
+
+  "epochs": 100,
+  "batch_size": 32,
+  "lr": 1e-4,
+  "lr_factor": 0.2,
+  "weight_decay": 1e-4,
+  "lr_patience": 10,
+  "early_stop_epochs": 30
+}

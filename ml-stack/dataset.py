@@ -140,6 +140,23 @@ class CTScanDataset(Dataset):
         class_counts[cls] += (class_ids == cls).sum().item()
     return class_counts
 
+  def get_multilabel_targets(self):
+    """
+    Returns binary multi-hot labels per image:
+    shape -> [num_images, num_classes]
+    """
+    labels = []
+    for mask_path in tqdm(self.masks, desc="[*] Building multilabel targets"):
+      mask = Image.open(mask_path).convert("L")
+      mask = np.array(mask)
+      class_ids = (mask // 10).astype(np.int64)
+      multi_hot = np.zeros(self.num_classes, dtype=np.int64)
+      for cls in np.unique(class_ids):
+        if cls < self.num_classes:
+          multi_hot[cls] = 1
+      labels.append(multi_hot)
+    return np.array(labels)
+
 
 if __name__ == "__main__":
   dataset = CTScanDataset("../data")
