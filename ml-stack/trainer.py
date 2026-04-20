@@ -12,6 +12,20 @@ from torch.utils.tensorboard import SummaryWriter
 import generate_report
 from config import *
 from utils import *
+from loss.hybrid_segmentation_loss import HybridSegmentationLoss
+
+METRICS = [
+  "loss",
+  "pixel_acc",
+  "IoU",
+  "Dice",
+  "F1",
+  "Hausdorff",
+  "w_IoU",
+  "w_Dice",
+  "w_F1",
+  "w_Hausdorff",
+]
 
 class Trainer:
   def __init__(
@@ -57,7 +71,7 @@ class Trainer:
     else:
       weights = None
 
-    self.loss_func = nn.CrossEntropyLoss(weight=weights)
+    self.loss_func = HybridSegmentationLoss(ce_weights=weights).to(device)
     self.class_weights = weights
     self.optim = torch.optim.AdamW(self.model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', factor=LR_FACTOR, patience=LR_PATIENCE)
@@ -80,30 +94,8 @@ class Trainer:
         self.writer = SummaryWriter(writer_path, purge_step=cast(int, None), max_queue=10, flush_secs=30)
     print("[*] Tensorboard output path:", writer_path)
 
-    self.train_metrics = {
-      "loss": [],
-      "pixel_acc": [],
-      "IoU": [],
-      "Dice": [],
-      "F1": [],
-      "Hausdorff": [],
-      "w_IoU": [],
-      "w_Dice": [],
-      "w_F1": [],
-      "w_Hausdorff": [],
-    }
-    self.val_metrics = {
-      "loss": [],
-      "pixel_acc": [],
-      "IoU": [],
-      "Dice": [],
-      "F1": [],
-      "Hausdorff": [],
-      "w_IoU": [],
-      "w_Dice": [],
-      "w_F1": [],
-      "w_Hausdorff": [],
-    }
+    self.train_metrics = { key: [] for key in METRICS }
+    self.val_metrics = { key: [] for key in METRICS }
 
   def save_onnx(self, example_input: torch.Tensor):
     self.onnx_path = self.model_path.split(".")[0] + ".onnx"
@@ -129,9 +121,10 @@ class Trainer:
       "min_loss": min_loss,
       "stop_cnt": stop_cnt,
       "model": self.ema_model.module.state_dict() if EMA else self.model.state_dict(),
+      "writer": self.writer_path,
       "optimizer": self.optim.state_dict(),
       "scheduler": self.scheduler.state_dict() if self.scheduler else None,
-      "writer": self.writer_path,
+      "config": json.load(open("configs/main.json", "r")),
     }
     torch.save(checkpoint, chpt_path)
     print(f"[+] Checkpoint saved at {chpt_path}.")
@@ -169,6 +162,11 @@ class Trainer:
     stop_cnt = checkpoint.get("stop_cnt", 0)
     writer = checkpoint.get("writer", self.writer)
 
+    optim_state = checkpoint.get("optimizer", None)
+    self.optim.load_state_dict(optim_state) if optim_state else None
+    scheduler_state = checkpoint.get("scheduler", None)
+    self.scheduler.load_state_dict(scheduler_state) if self.scheduler and scheduler_state else None
+
     print(f"[+] Resumed from checkpoint {chpt_path} (epoch {epoch})")
     return epoch, step, vstep, min_loss, stop_cnt, writer
 
@@ -197,30 +195,16 @@ class Trainer:
     loss.backward()
     optim.step()
     # if self.scheduler: self.scheduler.step()
-
     if EMA: self.ema_model.update_parameters(self.model)
 
-    current_metrics = {
-      "loss": loss.item(),
-      "pixel_acc": metrics["pixel_acc"],
-      "IoU": metrics["IoU"],
-      "Dice": metrics["Dice"],
-      "F1": metrics["F1"],
-      "Hausdorff": metrics["Hausdorff"],
-      "w_IoU": metrics["w_IoU"],
-      "w_Dice": metrics["w_Dice"],
-      "w_F1": metrics["w_F1"],
-      "w_Hausdorff": metrics["w_Hausdorff"],
-    }
+    current_metrics = {metric: (loss.item() if metric == "loss" else metrics[metric]) for metric in METRICS}
     self.log_scalars(
       "running train",
       current_metrics,
       step,
       self.epoch_train_metrics
     )
-    t.set_description("[train] " + " | ".join(
-      f"{name}: {value:.4f}" for name, value in current_metrics.items()
-    ))
+    t.set_description("[train] " + " | ".join(f"{name}: {value:.4f}" for name, value in current_metrics.items()))
 
   def train(self):
     try:
@@ -231,30 +215,8 @@ class Trainer:
 
       print("[*] Training...")
       for epoch in range(self.start_epoch, EPOCHS):
-        self.epoch_train_metrics = {
-          "loss": [],
-          "pixel_acc": [],
-          "IoU": [],
-          "Dice": [],
-          "F1": [],
-          "Hausdorff": [],
-          "w_IoU": [],
-          "w_Dice": [],
-          "w_F1": [],
-          "w_Hausdorff": [],
-        }
-        self.epoch_val_metrics = {
-          "loss": [],
-          "pixel_acc": [],
-          "IoU": [],
-          "Dice": [],
-          "F1": [],
-          "Hausdorff": [],
-          "w_IoU": [],
-          "w_Dice": [],
-          "w_F1": [],
-          "w_Hausdorff": [],
-        }
+        self.epoch_train_metrics = {key: [] for key in METRICS}
+        self.epoch_val_metrics = {key: [] for key in METRICS}
 
         self.model.train()
         print(f"\n[=>] Epoch {epoch+1}/{EPOCHS}")
@@ -321,9 +283,7 @@ class Trainer:
       vstep,
       self.epoch_val_metrics
     )
-    t.set_description("[val] " + " | ".join(
-      f"{name}: {value:.4f}" for name, value in current_metrics.items()
-    ))
+    t.set_description("[val] " + " | ".join(f"{name}: {value:.4f}" for name, value in current_metrics.items()))
 
   def eval(self, vstep, epoch):
     with torch.no_grad():
