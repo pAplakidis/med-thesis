@@ -28,4 +28,8 @@ with open("configs/main.json", "r") as f:
   LR_PATIENCE = config["lr_patience"]
   EARLY_STOP_EPOCHS = config["early_stop_epochs"]
 
+  LAMBDA_FT = config.get("lambda_ft", 0.5)
+  LAMBDA_GD = config.get("lambda_gd", 0.3)
+  LAMBDA_CE = config.get("lambda_ce", 0.2)
+
   print_config(config)

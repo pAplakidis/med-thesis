@@ -6,7 +6,6 @@ class HybridSegmentationLoss(nn.Module):
   def __init__(
     self,
     ce_weights=None,
-    # TODO: make these hyperparameters tunable via config
     lambda_ft=0.5,
     lambda_gd=0.3,
     lambda_ce=0.2,

@@ -93,6 +93,7 @@ class CTScanDataset(Dataset):
   def get_classes(self):
     return self.classes
 
+  # TODO: multiframe for 3D Unet
   def __getitem__(self, idx):
     # load grayscale image and mask
     image = Image.open(self.images[idx]).convert("L")   # CT scan image (grayscale)

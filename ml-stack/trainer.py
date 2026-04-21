@@ -14,6 +14,7 @@ from config import *
 from utils import *
 from loss.hybrid_segmentation_loss import HybridSegmentationLoss
 
+# TODO: loss is weighted sum, log dice + focal tversky + ce separately
 METRICS = [
   "loss",
   "pixel_acc",
@@ -21,10 +22,6 @@ METRICS = [
   "Dice",
   "F1",
   "Hausdorff",
-  "w_IoU",
-  "w_Dice",
-  "w_F1",
-  "w_Hausdorff",
 ]
 
 class Trainer:
@@ -59,19 +56,19 @@ class Trainer:
     self.early_stopping = early_stopping
 
     # compute class weights from per-pixel class balance
-    if dataset is not None:
-      pixel_counts = dataset.get_class_balance_per_pixel()
-      total_pixels = sum(pixel_counts.values())
-      num_classes = len(pixel_counts)
-      weights = torch.tensor([
-        total_pixels / (num_classes * pixel_counts[cls]) if pixel_counts[cls] > 0 else 0.0
-        for cls in range(num_classes)
-      ], dtype=torch.float32).to(device)
-      print("[*] Class weights:", weights.cpu().numpy())
-    else:
-      weights = None
+    weights = None
+    # NOTE: applying class-balanced weights results in the model including all classes per prediction, but most predictions contain background + 1-2 classes
+    # if dataset is not None:
+    #   pixel_counts = dataset.get_class_balance_per_pixel()
+    #   total_pixels = sum(pixel_counts.values())
+    #   num_classes = len(pixel_counts)
+    #   weights = torch.tensor([
+    #     total_pixels / (num_classes * pixel_counts[cls]) if pixel_counts[cls] > 0 else 0.0
+    #     for cls in range(num_classes)
+    #   ], dtype=torch.float32).to(device)
+    #   print("[*] Class weights:", weights.cpu().numpy())
 
-    self.loss_func = HybridSegmentationLoss(ce_weights=weights).to(device)
+    self.loss_func = HybridSegmentationLoss(ce_weights=weights, lambda_ft=LAMBDA_FT, lambda_gd=LAMBDA_GD, lambda_ce=LAMBDA_CE).to(device)
     self.class_weights = weights
     self.optim = torch.optim.AdamW(self.model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', factor=LR_FACTOR, patience=LR_PATIENCE)
@@ -171,11 +168,11 @@ class Trainer:
     return epoch, step, vstep, min_loss, stop_cnt, writer
 
   def log_scalars(
-      self,
-      tag_prefix: str,
-      metrics: dict,
-      step: int,
-      accumulators: Optional[dict] = None
+    self,
+    tag_prefix: str,
+    metrics: dict,
+    step: int,
+    accumulators: Optional[dict] = None
   ):
     for name, value in metrics.items():
       self.writer.add_scalar(f"{tag_prefix}/{name}", value, step)
@@ -255,7 +252,11 @@ class Trainer:
 
     print("[+] Training done")
     print("[*] Generating report ...")
-    generate_report.main(self.onnx_path, f"reports/{self.model_path.split('.')[0].replace("checkpoints/", '')}.json", dataset=self.train_loader.dataset.dataset if isinstance(self.train_loader.dataset, torch.utils.data.Subset) else self.train_loader.dataset)
+    generate_report.main(
+      self.onnx_path,
+      f"reports/{self.model_path.split('.')[0].replace("checkpoints/", '')}.json",
+      dataset=self.train_loader.dataset.dataset if isinstance(self.train_loader.dataset, torch.utils.data.Subset) else self.train_loader.dataset
+    )
 
   def eval_step(self, t, vstep, sample_batched):
     X = sample_batched[0].to(self.device)
@@ -265,18 +266,7 @@ class Trainer:
     loss = self.loss_func(out, Y).mean()
     metrics = compute_metrics(out.detach(), Y.detach(), weights=self.class_weights)
 
-    current_metrics = {
-      "loss": loss.item(),
-      "pixel_acc": metrics["pixel_acc"],
-      "IoU": metrics["IoU"],
-      "Dice": metrics["Dice"],
-      "F1": metrics["F1"],
-      "Hausdorff": metrics["Hausdorff"],
-      "w_IoU": metrics["w_IoU"],
-      "w_Dice": metrics["w_Dice"],
-      "w_F1": metrics["w_F1"],
-      "w_Hausdorff": metrics["w_Hausdorff"],
-    }
+    current_metrics = {metric: (loss.item() if metric == "loss" else metrics[metric]) for metric in METRICS}
     self.log_scalars(
       "running val",
       current_metrics,
