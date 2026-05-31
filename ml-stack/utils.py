@@ -88,6 +88,23 @@ def compute_metrics(pred, target, num_classes=len(RGB_COLORS), weights=None):
   else:
     metrics["w_IoU"] = metrics["w_Dice"] = metrics["w_F1"] = metrics["w_Hausdorff"] = 0
 
+  metrics["per_class"] = {}
+  for cls in range(num_classes):
+    cls_metrics = {}
+    if cls < len(per_class["IoU"]):
+      cls_metrics["IoU"] = float(per_class["IoU"][cls])
+      cls_metrics["Dice"] = float(per_class["Dice"][cls])
+      cls_metrics["F1"] = float(per_class["F1"][cls])
+      cls_metrics["Hausdorff"] = float(per_class["Hausdorff"][cls])
+      cls_metrics["count"] = int(per_class["counts"][cls])
+    else:
+      cls_metrics["IoU"] = 0.0
+      cls_metrics["Dice"] = 0.0
+      cls_metrics["F1"] = 0.0
+      cls_metrics["Hausdorff"] = 0.0
+      cls_metrics["count"] = 0
+    metrics["per_class"][str(cls)] = cls_metrics
+
   return metrics
 
 

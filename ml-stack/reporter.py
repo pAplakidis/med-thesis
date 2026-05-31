@@ -216,10 +216,10 @@ def build_per_class_table(reports, model_labels):
       metrics = pred.get("metrics", {})
       for cls in range(len(RGB_COLORS)):
         if cls not in class_metrics:
-          class_metrics[cls] = {"IoU": [], "Dice": [], "F1": []}
+          class_metrics[cls] = {"IoU": [], "Dice": [], "F1": [], "Hausdorff": [], "count": []}
 
         if "per_class" in metrics:
-          for metric_name in ["IoU", "Dice", "F1"]:
+          for metric_name in ["IoU", "Dice", "F1", "Hausdorff", "count"]:
             if metric_name in metrics["per_class"].get(str(cls), {}):
               class_metrics[cls][metric_name].append(metrics["per_class"][str(cls)][metric_name])
 
@@ -228,9 +228,11 @@ def build_per_class_table(reports, model_labels):
         rows.append({
           "Model": label,
           "Class": CLASS_NAMES[cls],
+          "Samples": len(class_metrics[cls]["count"]),
           "Avg IoU": f"{np.mean(class_metrics[cls]['IoU']):.4f}",
           "Avg Dice": f"{np.mean(class_metrics[cls]['Dice']):.4f}",
           "Avg F1": f"{np.mean(class_metrics[cls]['F1']):.4f}",
+          "Avg Hausdorff": f"{np.mean(class_metrics[cls]['Hausdorff']):.2f}",
         })
 
   if not rows:
@@ -250,11 +252,55 @@ def build_top_worst_table(report, model_label, metric="IoU", n=10, ascending=Tru
   for pred in top_preds:
     rows.append({
       "Model": model_label,
-      "Image": os.path.basename(pred.get("image_path", "")),
+      "Image": pred.get("image_path", ""),
       "Split": pred.get("split", ""),
       metric: f"{pred.get('metrics', {}).get(metric, 0):.4f}",
       "Pixel Acc": f"{pred.get('metrics', {}).get('pixel_acc', 0):.4f}",
       "Dice": f"{pred.get('metrics', {}).get('Dice', 0):.4f}",
+    })
+
+  return pd.DataFrame(rows)
+
+
+def build_per_class_worst_best(report, model_label, class_id, metric="IoU", n=10, ascending=True, only_present=True):
+  predictions = report.get("predictions", [])
+  if not predictions:
+    return None
+
+  filtered = []
+  for pred in predictions:
+    metrics = pred.get("metrics", {})
+    if "per_class" not in metrics:
+      continue
+    cls_metrics = metrics["per_class"].get(str(class_id), {})
+    cls_count = cls_metrics.get("count", 0)
+    if only_present and cls_count == 0:
+      continue
+    if metric in cls_metrics and cls_metrics[metric] > 0:
+      filtered.append({
+        "pred": pred,
+        "value": cls_metrics[metric],
+        "pixel_acc": metrics.get("pixel_acc", 0),
+        "dice": metrics.get("Dice", 0),
+      })
+
+  if not filtered:
+    return None
+
+  sorted_preds = sorted(filtered, key=lambda p: p["value"], reverse=not ascending)
+  top_preds = sorted_preds[:n]
+
+  rows = []
+  for p in top_preds:
+    pred = p["pred"]
+    rows.append({
+      "Model": model_label,
+      "Class": CLASS_NAMES[class_id],
+      "Image": pred.get("image_path", ""),
+      "Split": pred.get("split", ""),
+      f"{CLASS_NAMES[class_id]} {metric}": f"{p['value']:.4f}",
+      "Pixel Acc": f"{p['pixel_acc']:.4f}",
+      "Dice": f"{p['dice']:.4f}",
     })
 
   return pd.DataFrame(rows)
@@ -450,6 +496,42 @@ def main():
         worst_df = build_top_worst_table(selected_report, selected_model, metric=selected_metric, n=n_results, ascending=True)
         if worst_df is not None:
           st.dataframe(worst_df, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    st.subheader("Per-Class Worst / Best Predictions")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+      pc_model = st.selectbox("Model", options=report_labels, key="pc_model")
+    with col2:
+      pc_class = st.selectbox("Class", options=list(range(len(CLASS_NAMES))), format_func=lambda x: CLASS_NAMES[x], key="pc_class")
+    with col3:
+      pc_metric = st.selectbox("Metric", options=["IoU", "Dice", "F1", "Hausdorff"], key="pc_metric")
+    with col4:
+      pc_n = st.number_input("Number of results", min_value=1, max_value=50, value=10, key="pc_n")
+    with col5:
+      pc_only_present = st.checkbox("Only present", value=True, key="pc_present", help="Only show predictions where class is present in ground truth")
+
+    pc_report = None
+    for label, report in zip(report_labels, reports):
+      if label == pc_model:
+        pc_report = report
+        break
+
+    if pc_report:
+      pc_tab_best, pc_tab_worst = st.tabs([f"Best {CLASS_NAMES[pc_class]} Predictions", f"Worst {CLASS_NAMES[pc_class]} Predictions"])
+      with pc_tab_best:
+        pc_best_df = build_per_class_worst_best(pc_report, pc_model, class_id=pc_class, metric=pc_metric, n=pc_n, ascending=False, only_present=pc_only_present)
+        if pc_best_df is not None:
+          st.dataframe(pc_best_df, use_container_width=True, hide_index=True)
+        else:
+          st.info("No per-class metrics available for this class.")
+      with pc_tab_worst:
+        pc_worst_df = build_per_class_worst_best(pc_report, pc_model, class_id=pc_class, metric=pc_metric, n=pc_n, ascending=True, only_present=pc_only_present)
+        if pc_worst_df is not None:
+          st.dataframe(pc_worst_df, use_container_width=True, hide_index=True)
+        else:
+          st.info("No per-class metrics available for this class.")
 
 
 if __name__ == "__main__":

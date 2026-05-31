@@ -5,3 +5,8 @@ matplotlib
 thop
 plotly
 iterative-stratification
+torch
+torchvision
+onnx
+onnxruntime-gpu
+streamlit
