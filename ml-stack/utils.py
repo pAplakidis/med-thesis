@@ -3,6 +3,21 @@ import numpy as np
 from medpy.metric import binary
 import matplotlib.pyplot as plt
 
+# epidural hematoma (EDH)
+# subdural hematoma (SDH)
+# intraventricular hemorrhage (IVH)
+# subarachnoid hemorrhage (SAH)
+# intraparenchymal hemorrhage (IPH)
+CLASS_NAMES = [
+  "BACKGROUND",
+  "BONE",
+  "CONTUSSION",
+  "EDH",
+  "IVH",
+  "SAH",
+  "SDH",
+]
+
 RGB_COLORS = {
     0: (0, 0, 0),          # background
     1: (128, 0, 0),        # category_id 0
@@ -10,9 +25,7 @@ RGB_COLORS = {
     3: (128, 128, 0),      # category_id 2
     4: (0, 0, 128),        # category_id 3
     5: (255, 0, 255),      # category_id 4
-    6: (255, 0, 0),        # category_id 5
-    7: (0, 255, 0),        # category_id 6
-    8: (0, 0, 255),        # category_id 7
+    6: (250, 136, 5)       # category_id 5
 }
 
 def compute_metrics(pred, target, num_classes=len(RGB_COLORS), weights=None):

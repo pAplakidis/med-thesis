@@ -9,27 +9,10 @@ from tqdm import tqdm
 from pathlib import Path
 
 from dataset import CTScanDataset
-from utils import RGB_COLORS
+from utils import CLASS_NAMES, RGB_COLORS
 
 # run:  streamlit run arena.py
 # or:   streamlit run arena.py --server.address 0.0.0.0 --server.port 8501
-
-# epidural hematoma (EDH)
-# subdural hematoma (SDH)
-# intraventricular hemorrhage (IVH)
-# subarachnoid hemorrhage (SAH)
-# intraparenchymal hemorrhage (IPH)
-CLASS_NAMES = [
-  "BACKGROUND",
-  "BONE",
-  "EDH",
-  "SDH",
-  "IVH",
-  "SAH",
-  "CONTUSSION",
-  "CLASS_6",
-  "CLASS_7",
-]
 
 # utils
 @st.cache_data

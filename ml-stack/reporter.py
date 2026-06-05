@@ -10,21 +10,10 @@ from pathlib import Path
 from tensorboard.backend.event_processing import event_accumulator
 
 from config import *
-from utils import RGB_COLORS
+from utils import CLASS_NAMES, RGB_COLORS
 
 # run: streamlit run reporter.py --server.address 0.0.0.0 --server.port 8501
 
-CLASS_NAMES = [
-  "BACKGROUND",
-  "BONE",
-  "EDH",
-  "SDH",
-  "IVH",
-  "SAH",
-  "CONTUSSION",
-  "CLASS_6",
-  "CLASS_7",
-]
 
 METRIC_NAMES = {
   "loss": "Loss",
