@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "deep-learning-python": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "deep-learning-python/SKILL.md",
+      "computedHash": "571ac1c06187227523cdcfbff949a197682c40d841abdec3f7f0807409f6ed44"
+    },
+    "deep-learning-pytorch": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "deep-learning-pytorch/SKILL.md",
+      "computedHash": "c0bbc23461e1640cfcf1236ed453e3be5b5ff6e334b74c2bbb05b1b7de79691c"
+    },
+    "ml-model-training": {
+      "source": "secondsky/claude-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/ml-model-training/skills/ml-model-training/SKILL.md",
+      "computedHash": "7ec25d4cbe57adc5c616a5710fc53581f0d56b2a3efdbb11c25b5b72fa97fd76"
+    }
+  }
+}
