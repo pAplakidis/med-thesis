@@ -68,8 +68,7 @@ if __name__ == "__main__":
 
   # model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
   #                         in_channels=1, out_channels=dataset.num_classes, init_features=32, pretrained=False)
-  # model = UNet(PRESETS["unet_xl"].to_config())  # FIXME: shape mismatch due to attention + residual
-  model = UNet(PRESETS["unet_large"].to_config())
+  model = UNet(PRESETS["unet_xl"].to_config())
   model.to(device)
 
   trainer = Trainer(

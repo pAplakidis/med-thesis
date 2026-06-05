@@ -36,6 +36,14 @@ Reporter tool is a detailed viewer of the trained and evaluated models for in-de
 streamlit run reporter.py
 ```
 
+If you want to connect via ssh:
+
+```bash
+ssh -L 8501:localhost:8501 user@host
+```
+
+Change port to the one that streamlit runs on
+
 ### Training workflow
 
 - Configure model

@@ -91,6 +91,14 @@ PRESETS = {
     base_features=256,
     depth=5,
     convs_per_block=3,
+    dropout=0.1,
+  ),
+  "unet_xl_attn_res": Preset(
+    name="unet_xl_attn_res",
+    base_features=256,
+    depth=5,
+    convs_per_block=3,
+    use_residual=True,
     use_attention=True,
     dropout=0.1,
   ),
@@ -170,11 +178,12 @@ class AttentionGate(nn.Module):
     self.relu = nn.ReLU(inplace=True)
 
   def forward(self, g, x):
+    skip = x
     g = self.W_g(g)
     x = self.W_x(x)
     psi = self.relu(g + x)
     psi = self.psi(psi)
-    return x * psi
+    return skip * psi
 
 
 class DoubleConv(nn.Module):
@@ -256,9 +265,12 @@ class UNet(nn.Module):
     )
 
     self.up = nn.ModuleList()
+    self.attention = nn.ModuleList() if config.use_attention else None
     for _ in range(self.depth):
       features //= 2
       self.up.append(nn.ConvTranspose2d(features * 2, features, 2, stride=2))
+      if self.attention is not None:
+        self.attention.append(AttentionGate(features, features, features // 2))
       self.up.append(
         DoubleConv(
           features * 2,
@@ -269,11 +281,6 @@ class UNet(nn.Module):
           dropout=config.dropout,
         )
       )
-
-    if config.use_attention:
-      self.attention = nn.ModuleList()
-      for _ in range(self.depth):
-        self.attention.append(AttentionGate(features, features, features // 2))
 
     self.final = nn.Conv2d(self.base_features, self.num_classes, 1)
 
@@ -289,10 +296,10 @@ class UNet(nn.Module):
     for i in range(0, len(self.up), 2):
       x = self.up[i](x)
       skip = skips.pop()
-      x = torch.cat([x, skip], dim=1)
-      if hasattr(self, "attention") and self.config.use_attention:
+      if self.attention is not None:
         attn_idx = i // 2
-        x = self.attention[attn_idx](x, skip)
+        skip = self.attention[attn_idx](x, skip)
+      x = torch.cat([x, skip], dim=1)
       x = self.up[i + 1](x)
 
     return self.final(x)

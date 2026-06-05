@@ -7,10 +7,14 @@
   "train_size": 0.7,
 
   "epochs": 200,
-  "batch_size": 16,
+  "batch_size": 12,
   "lr": 1e-4,
   "lr_factor": 0.2,
   "weight_decay": 1e-4,
   "lr_patience": 10,
-  "early_stop_epochs": 30
+  "early_stop_epochs": 30,
+
+  "lambda_ft": 0.5,
+  "lambda_gd": 0.4,
+  "lambda_ce": 0.1
 }
