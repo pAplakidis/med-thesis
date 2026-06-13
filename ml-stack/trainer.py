@@ -51,7 +51,8 @@ class Trainer:
     skip_training = False,
     save_checkpoints = False,
     early_stopping = True,
-    dataset = None
+    dataset = None,
+    finetune = False
   ):
     self.device = device
     self.model = model
@@ -67,6 +68,7 @@ class Trainer:
     self.scheduler = None
     self.ema_model = None
     self.early_stopping = early_stopping
+    self.finetune = finetune
     self.multitask = getattr(self.model, "multitask", False)
     self.lambda_clf = LAMBDA_CLF
     self.clf_loss_func = nn.BCEWithLogitsLoss().to(device)
@@ -100,9 +102,10 @@ class Trainer:
 
     if not self.writer:
       if not writer_path:
-        experiment_folder = os.path.dirname(model_path.split('/')[-2])  # e.g. checkpoints/experiment/model.pt
+        experiment_folder = os.path.basename(os.path.dirname(model_path)) or "default"
+        model_name = os.path.splitext(os.path.basename(model_path))[0]
         today = str(datetime.now()).replace(" ", "_")
-        auto_name = "-".join([experiment_folder, model_path.split('/')[-1].split('.')[0], today, f"lr_{LR}", f"bs_{BATCH_SIZE}"])
+        auto_name = "-".join([experiment_folder, model_name, today, f"lr_{LR}", f"bs_{BATCH_SIZE}"])
         writer_path = str("runs/" + auto_name).replace(":", "_").replace(".", "_")
         self.writer = SummaryWriter(writer_path)
       else:
@@ -189,6 +192,40 @@ class Trainer:
       return -1, 0, 0, float("inf"), 0, None
 
     checkpoint = torch.load(chpt_path, map_location=self.device, weights_only=False)
+
+    if self.finetune:
+      if isinstance(checkpoint, dict) and "model" in checkpoint and isinstance(checkpoint["model"], dict):
+        state_dict = checkpoint["model"]
+      elif isinstance(checkpoint, dict):
+        state_dict = checkpoint
+      else:
+        raise TypeError("Checkpoint must be a dict or a full trainer checkpoint")
+
+      model_state = self.model.state_dict()
+      filtered_state = {}
+      skipped_shape_mismatch = []
+      skipped_missing = []
+      for key, value in state_dict.items():
+        if key not in model_state:
+          skipped_missing.append(key)
+          continue
+        if model_state[key].shape != value.shape:
+          skipped_shape_mismatch.append((key, tuple(value.shape), tuple(model_state[key].shape)))
+          continue
+        filtered_state[key] = value
+
+      load_result = self.model.load_state_dict(filtered_state, strict=False)
+      print(f"[+] Loaded finetune checkpoint {chpt_path} (model weights only)")
+      print(f"[*] Loaded {len(filtered_state)}/{len(state_dict)} compatible tensors")
+      if skipped_shape_mismatch:
+        print(f"[*] Skipped shape-mismatched keys: {skipped_shape_mismatch}")
+      if skipped_missing:
+        print(f"[*] Skipped missing keys: {skipped_missing}")
+      if load_result.missing_keys:
+        print(f"[*] Missing keys: {load_result.missing_keys}")
+      if load_result.unexpected_keys:
+        print(f"[*] Unexpected keys: {load_result.unexpected_keys}")
+      return -1, 0, 0, float("inf"), 0, None
 
     # load model
     if EMA:

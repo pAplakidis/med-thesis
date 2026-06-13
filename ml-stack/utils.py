@@ -76,30 +76,10 @@ def compute_metrics(pred, target, num_classes=len(RGB_COLORS), weights=None):
     per_class["Hausdorff"].append(hd if hd is not None else 0.0)
     per_class["counts"].append(target_count)
 
-  counts = torch.tensor(per_class["counts"], dtype=torch.float32)
-  if weights is not None:
-    w = weights[:len(counts)].float()
-  else:
-    w = counts
-
-  w_sum = w.sum()
-  if w_sum > 0:
-    w_norm = w / w_sum
-  else:
-    w_norm = torch.ones(len(counts)) / len(counts) if len(counts) > 0 else torch.tensor([1.0])
-
   metrics["IoU"] = sum(per_class["IoU"]) / len(per_class["IoU"]) if per_class["IoU"] else 0
   metrics["Dice"] = sum(per_class["Dice"]) / len(per_class["Dice"]) if per_class["Dice"] else 0
   metrics["F1"] = sum(per_class["F1"]) / len(per_class["F1"]) if per_class["F1"] else 0
   metrics["Hausdorff"] = sum(per_class["Hausdorff"]) / len(per_class["Hausdorff"]) if per_class["Hausdorff"] else 0
-
-  if len(per_class["IoU"]) > 0:
-    metrics["w_IoU"] = sum(w_norm[i].item() * v for i, v in enumerate(per_class["IoU"]))
-    metrics["w_Dice"] = sum(w_norm[i].item() * v for i, v in enumerate(per_class["Dice"]))
-    metrics["w_F1"] = sum(w_norm[i].item() * v for i, v in enumerate(per_class["F1"]))
-    metrics["w_Hausdorff"] = sum(w_norm[i].item() * v for i, v in enumerate(per_class["Hausdorff"]))
-  else:
-    metrics["w_IoU"] = metrics["w_Dice"] = metrics["w_F1"] = metrics["w_Hausdorff"] = 0
 
   metrics["per_class"] = {}
   for cls in range(num_classes):
