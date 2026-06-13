@@ -14,6 +14,9 @@ from config import *
 from utils import compute_metrics, compute_multilabel_metrics
 from dataset import CTScanDataset
 
+# EXAMPLE USAGE:
+# ONNX_USE_CUDA=1 python generate_report.py checkpoints/<experiment>/<onnx_model> reports/<experiment>/<report_name>.json
+
 
 def get_model_size(onnx_path):
   """Get ONNX model size in bytes and parameter count."""
@@ -46,13 +49,31 @@ def get_gflops(session, input_shape):
     return None
 
 
-def predict_single(session, image_tensor):
+def make_session(onnx_path, use_cuda=False):
+  providers = ["CPUExecutionProvider"]
+  if use_cuda:
+    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+  session = ort.InferenceSession(onnx_path, providers=providers)
+  return session
+
+
+def predict_single(session, image_tensor, onnx_path=None, use_cuda=False):
   """Run inference on a single image tensor [1, C, H, W], return timing and raw outputs."""
   input_np = image_tensor.numpy().astype(np.float32)
   input_name = session.get_inputs()[0].name
 
   start = time.perf_counter()
-  outputs = session.run(None, {input_name: input_np})
+  try:
+    outputs = session.run(None, {input_name: input_np})
+  except Exception as e:
+    if use_cuda and onnx_path is not None:
+      print(f"[!] CUDA inference failed, falling back to CPU: {e}")
+      session = make_session(onnx_path, use_cuda=False)
+      start = time.perf_counter()
+      outputs = session.run(None, {input_name: input_np})
+    else:
+      raise
   elapsed = time.perf_counter() - start
 
   return elapsed, outputs
@@ -90,11 +111,12 @@ def main(onnx_path, report_path, dataset=None):
   os.makedirs(os.path.dirname(report_path) if os.path.dirname(report_path) else ".", exist_ok=True)
 
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-  providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if torch.cuda.is_available() else ["CPUExecutionProvider"]
+  use_cuda = os.getenv("ONNX_USE_CUDA", "0").lower() in ("1", "true", "yes")
   print(f"[+] Using device: {device}")
 
   print(f"[*] Loading ONNX model from {onnx_path}")
-  session = ort.InferenceSession(onnx_path, providers=providers)
+  session = make_session(onnx_path, use_cuda=use_cuda and torch.cuda.is_available())
+  print(f"[*] ONNX providers: {session.get_providers()}")
   output_names = [meta.name for meta in session.get_outputs()]
   is_multitask = "clf" in output_names or len(output_names) > 1
 
@@ -121,7 +143,7 @@ def main(onnx_path, report_path, dataset=None):
   predictions = []
   all_metrics = {
     "loss": [], "pixel_acc": [], "IoU": [], "Dice": [], "F1": [],
-    "Hausdorff": [], "w_IoU": [], "w_Dice": [], "w_F1": [], "w_Hausdorff": [],
+    "Hausdorff": [],
   }
   if is_multitask:
     all_metrics.update({
@@ -150,7 +172,7 @@ def main(onnx_path, report_path, dataset=None):
     image_path = dataset.images[idx]
     mask_path = dataset.masks[idx]
 
-    elapsed, outputs = predict_single(session, image)
+    elapsed, outputs = predict_single(session, image, onnx_path=onnx_path, use_cuda=use_cuda and torch.cuda.is_available())
     seg_logits_np, clf_logits_np = _resolve_outputs(session, outputs)
 
     logits = torch.from_numpy(seg_logits_np)

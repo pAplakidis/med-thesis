@@ -37,7 +37,6 @@ def compute_mask_class_presence(_dataset, cache_path="presence.pkl"):
   for img_path, mask_path in tqdm(zip(_dataset.images, _dataset.masks), desc="[*] Computing mask class presence", total=len(_dataset.images)):
     mask = Image.open(mask_path).convert("L")
     mask = np.array(mask)
-    print(mask)
     class_ids = (mask // 10).astype(np.int64)
     unique_classes = set(np.unique(class_ids).tolist())
     presence[img_path] = unique_classes
@@ -46,6 +45,55 @@ def compute_mask_class_presence(_dataset, cache_path="presence.pkl"):
     pickle.dump(presence, f)
 
   return presence
+
+
+def sigmoid(x):
+  return 1 / (1 + np.exp(-x))
+
+
+def resolve_outputs(session, outputs):
+  output_meta = session.get_outputs()
+  output_map = {meta.name: out for meta, out in zip(output_meta, outputs)}
+
+  seg_logits = output_map.get("seg")
+  if seg_logits is None:
+    seg_logits = output_map.get("mask")
+  clf_logits = output_map.get("clf")
+
+  if seg_logits is None:
+    for out in outputs:
+      if out.ndim == 4:
+        seg_logits = out
+        break
+
+  if clf_logits is None:
+    for out in outputs:
+      if out.ndim == 2:
+        clf_logits = out
+        break
+
+  return seg_logits, clf_logits
+
+
+def format_image_labels(labels_or_probs, threshold=0.5, show_background=False, show_all_probs=False, is_probs=False):
+  lines = []
+  for cls in range(len(CLASS_NAMES)):
+    if cls == 0 and not show_background:
+      continue
+    if cls >= len(labels_or_probs):
+      continue
+
+    value = labels_or_probs[cls]
+    if is_probs:
+      if show_all_probs or value >= threshold:
+        lines.append(f"{CLASS_NAMES[cls]}: {value:.2f}")
+    else:
+      if value:
+        lines.append(CLASS_NAMES[cls])
+
+  if not lines:
+    return ["(none)"]
+  return lines
 
 def colorize_mask(mask):
   """
@@ -64,8 +112,7 @@ def load_image_and_mask(_dataset, idx):
   image, mask = _dataset[idx]
 
   # denormalize image
-  disp_image = image * 0.5 + 0.5
-  disp_image = image.squeeze().numpy()
+  disp_image = (image * 0.5 + 0.5).squeeze().numpy()
 
   disp_mask = mask.numpy()
 
@@ -150,9 +197,23 @@ def predict_with_model(model, image):
     return None
   input_np = image.unsqueeze(0).numpy().astype(np.float32)
   input_name = model.get_inputs()[0].name
-  out = model.run(None, {input_name: input_np})[0]
-  pred = np.argmax(out, axis=1).squeeze(0)
-  return pred
+  outputs = model.run(None, {input_name: input_np})
+  output_names = [meta.name for meta in model.get_outputs()]
+  seg_logits, clf_logits = resolve_outputs(model, outputs)
+
+  pred = np.argmax(seg_logits, axis=1).squeeze(0)
+  clf_probs = None
+  clf_pred = None
+  if clf_logits is not None:
+    clf_probs = sigmoid(clf_logits).squeeze(0)
+    clf_pred = (clf_probs >= 0.5).astype(np.int64)
+
+  return {
+    "seg_mask": pred,
+    "clf_probs": clf_probs,
+    "clf_pred": clf_pred,
+    "output_names": output_names,
+  }
 
 # UI components
 def render_class_balance(balance):
@@ -211,6 +272,12 @@ def render_image_view(image, mask):
   with col3:
     st.subheader("Overlay")
     st.image(to_pil(overlay_mask(image, mask)), width="stretch")
+
+
+def render_label_list(title, labels):
+  st.subheader(title)
+  for label in labels:
+    st.write(label)
 
 def build_hierarchy(dataset):
   """
@@ -317,13 +384,17 @@ def sidebar_controls(dataset, presence_map):
     format_func=lambda x: CLASS_NAMES[x]
   )
 
+  clf_threshold = st.sidebar.slider("Classification threshold", 0.0, 1.0, 0.5, 0.05)
+  show_background = st.sidebar.checkbox("Show background label", value=False)
+  show_all_probs = st.sidebar.checkbox("Show all class probabilities", value=False)
+
   # filter images
   filtered_indices = filter_indices(dataset, presence_map, selected_classes)
 
   # file list
   selected_idx = sidebar_image_selector(dataset, filtered_indices)
 
-  return selected_idx, checkpoints_dir, selected_models, model_map
+  return selected_idx, checkpoints_dir, selected_models, model_map, clf_threshold, show_background, show_all_probs
 
 def main():
   st.title("CT Scan Arena")
@@ -338,7 +409,7 @@ def main():
   presence_map = compute_mask_class_presence(dataset)
 
   # sidebar (left)
-  selected_idx, checkpoints_dir, selected_models, model_map = sidebar_controls(dataset, presence_map)
+  selected_idx, checkpoints_dir, selected_models, model_map, clf_threshold, show_background, show_all_probs = sidebar_controls(dataset, presence_map)
   if selected_idx is None:
     st.warning("No image selected")
     return
@@ -362,20 +433,38 @@ def main():
           if pred is not None:
             final_loss = get_model_final_loss(checkpoints_dir, experiment, version)
             loss_suffix = f" (val loss: {final_loss:.4f})" if final_loss is not None else ""
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
               st.subheader(f"{model_label}{loss_suffix}")
-              st.image(to_pil(colorize_mask(pred)), width="stretch")
+              st.image(to_pil(colorize_mask(pred["seg_mask"])), width="stretch")
             with col2:
               st.subheader(f"{model_label} (Overlay)")
-              st.image(to_pil(overlay_mask(image, pred)), width="stretch")
+              st.image(to_pil(overlay_mask(image, pred["seg_mask"])), width="stretch")
+            with col3:
+              st.subheader(f"{model_label} (Image Labels)")
+              if pred["clf_probs"] is not None:
+                pred_labels = format_image_labels(
+                  pred["clf_probs"],
+                  threshold=clf_threshold,
+                  show_background=show_background,
+                  show_all_probs=show_all_probs,
+                  is_probs=True,
+                )
+                st.write("Predicted classes:")
+                for label in pred_labels:
+                  st.write(label)
+              else:
+                st.write("Classification output: not available")
 
   # RIGHT: stats + legend
   with right_col:
-    st.subheader("Classes in Image")
+    st.subheader("Ground-truth Image Labels")
     present = presence_map[dataset.images[selected_idx]]
-    for cls in sorted(present):
-      st.write(f"{CLASS_NAMES[cls]}")
+    gt_labels = [CLASS_NAMES[cls] for cls in sorted(present) if show_background or cls != 0]
+    if not gt_labels:
+      gt_labels = ["(none)"]
+    for label in gt_labels:
+      st.write(label)
     st.divider()
     render_legend()
     balance = compute_class_balance(dataset)

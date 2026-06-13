@@ -23,10 +23,6 @@ METRIC_NAMES = {
   "Dice": "Dice",
   "F1": "F1",
   "Hausdorff": "Hausdorff Distance",
-  "w_IoU": "Weighted IoU",
-  "w_Dice": "Weighted Dice",
-  "w_F1": "Weighted F1",
-  "w_Hausdorff": "Weighted Hausdorff Distance",
 }
 
 DEFAULT_COLORS = [
@@ -186,7 +182,7 @@ def build_comparison_table(reports, model_labels):
       "Val Samples": summary.get("val_samples", 0),
     }
 
-    for metric_key in ["pixel_acc", "IoU", "Dice", "F1", "Hausdorff", "w_IoU", "w_Dice", "w_F1", "w_Hausdorff"]:
+    for metric_key in ["pixel_acc", "IoU", "Dice", "F1", "Hausdorff"]:
       row[METRIC_NAMES.get(metric_key, metric_key)] = f"{avg_metrics.get(metric_key, 0):.4f}"
 
     data.append(row)
