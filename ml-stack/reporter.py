@@ -14,6 +14,7 @@ from utils import CLASS_NAMES, RGB_COLORS
 
 # run: streamlit run reporter.py --server.address 0.0.0.0 --server.port 8501
 
+# TODO: per image classes metrics (multilabel clf)
 
 METRIC_NAMES = {
   "loss": "Loss",

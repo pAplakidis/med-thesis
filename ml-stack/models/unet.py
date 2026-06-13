@@ -86,14 +86,13 @@ PRESETS = {
     depth=5,
     convs_per_block=3,
   ),
-  "unet_xl": Preset(
-    name="unet_xl",
-    base_features=256,
+  "unet_large_plus": Preset(
+    name="unet_large_plus",
+    base_features=144,
     depth=5,
     convs_per_block=3,
-    dropout=0.1,
   ),
-  "unet_xl_attn_res": Preset(
+  "unet_xl": Preset(
     name="unet_xl_attn_res",
     base_features=256,
     depth=5,

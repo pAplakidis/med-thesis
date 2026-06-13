@@ -71,7 +71,6 @@ class CTScanDataset(Dataset):
     self.images, self.masks = list(self.images), list(self.masks)
     print("[+] Found {} image-mask pairs".format(len(self.images)))
 
-    # TODO: include some empty masks for better class balance
     # filter out masks with only background (class 0)
     print("[*] Filtering out empty masks...")
     filtered_images, filtered_masks = [], []
@@ -93,16 +92,19 @@ class CTScanDataset(Dataset):
   def get_classes(self):
     return self.classes
 
-  # TODO: multiframe for 3D Unet
+  # TODO: multiframe for 2.5/3D Unet
+  # TODO: return image classes as well
   def __getitem__(self, idx):
     # load grayscale image and mask
     image = Image.open(self.images[idx]).convert("L")   # CT scan image (grayscale)
     mask = Image.open(self.masks[idx]).convert("L")     # segmentation mask (grayscale)
 
+    # TODO: data augmentations
     # transforms for CT image
     image_transform = transforms.Compose([
       transforms.Resize(IMAGE_SIZE),    # resize to fixed size
       transforms.ToTensor(),                      # -> [1,H,W], values in [0,1]
+      # TODO: is this norm good? (check literature)
       transforms.Normalize(mean=[NORM_MEAN], std=[NORM_STD]) # normalize grayscale
     ])
 

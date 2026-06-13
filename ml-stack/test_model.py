@@ -8,7 +8,7 @@ if __name__ == "__main__":
   print("[+] Using device:", device)
 
   # model = UNet(in_channels=1, num_classes=len(RGB_COLORS))
-  model = UNet(PRESETS["unet_xl"].to_config()).to(device)
+  model = UNet(PRESETS["unet_large_plus"].to_config()).to(device)
   model.eval()
 
   x = torch.randn(1, 1, * (IMAGE_SIZE, IMAGE_SIZE), device=device)

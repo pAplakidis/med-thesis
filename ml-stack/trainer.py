@@ -83,8 +83,9 @@ class Trainer:
 
     if not self.writer:
       if not writer_path:
+        experiment_folder = os.path.dirname(model_path.split('/')[-2])  # e.g. checkpoints/experiment/model.pt
         today = str(datetime.now()).replace(" ", "_")
-        auto_name = "-".join([model_path.split('/')[-1].split('.')[0], today, f"lr_{LR}", f"bs_{BATCH_SIZE}"])
+        auto_name = "-".join([experiment_folder, model_path.split('/')[-1].split('.')[0], today, f"lr_{LR}", f"bs_{BATCH_SIZE}"])
         writer_path = str("runs/" + auto_name).replace(":", "_").replace(".", "_")
         self.writer = SummaryWriter(writer_path)
       else:
@@ -133,7 +134,7 @@ class Trainer:
       print(f"[!] No checkpoint found at {chpt_path}")
       return -1, 0, 0, float("inf"), 0, None
 
-    checkpoint = torch.load(chpt_path, map_location=self.device)
+    checkpoint = torch.load(chpt_path, map_location=self.device, weights_only=False)
 
     # load model
     if EMA:
@@ -157,7 +158,8 @@ class Trainer:
     vstep = checkpoint.get("vstep", 0)
     min_loss = checkpoint.get("min_loss", float("inf"))
     stop_cnt = checkpoint.get("stop_cnt", 0)
-    writer = checkpoint.get("writer", self.writer)
+    writer_path = checkpoint.get("writer", None)
+    writer = SummaryWriter(writer_path, purge_step=cast(int, None), max_queue=10, flush_secs=30) if writer_path else None
 
     optim_state = checkpoint.get("optimizer", None)
     self.optim.load_state_dict(optim_state) if optim_state else None
