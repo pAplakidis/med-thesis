@@ -16,5 +16,6 @@
 
   "lambda_ft": 1.0,
   "lambda_gd": 1.0,
-  "lambda_ce": 1.0
+  "lambda_ce": 1.0,
+  "lambda_clf": 1.0
 }

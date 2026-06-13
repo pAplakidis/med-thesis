@@ -4,6 +4,7 @@ import numpy as np
 from tqdm import tqdm, trange
 from PIL import Image
 
+import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 
@@ -12,10 +13,11 @@ from utils import *
 
 
 class CTScanDataset(Dataset):
-  def __init__(self, base_dir):
+  def __init__(self, base_dir, clf=False):
     self.base_dir = base_dir
     self.num_classes = len(RGB_COLORS)
     self.classes = list(RGB_COLORS.keys())
+    self.clf = clf
 
     # find annotated studies
     self.result_files = []
@@ -84,6 +86,10 @@ class CTScanDataset(Dataset):
     self.images, self.masks = filtered_images, filtered_masks
     print(f"[+] Kept {len(self.images)} pairs with at least one foreground class")
 
+    self.clf_targets = None
+    if self.clf:
+      self.clf_targets = self.get_multilabel_targets()
+
     print("[+] Dataset initialized.")
 
   def __len__(self):
@@ -93,7 +99,6 @@ class CTScanDataset(Dataset):
     return self.classes
 
   # TODO: multiframe for 2.5/3D Unet
-  # TODO: return image classes as well
   def __getitem__(self, idx):
     # load grayscale image and mask
     image = Image.open(self.images[idx]).convert("L")   # CT scan image (grayscale)
@@ -117,6 +122,10 @@ class CTScanDataset(Dataset):
 
     image = image_transform(image)
     mask = mask_transform(mask).squeeze(0)  # drop channel -> [H,W]
+    if self.clf:
+      clf_target = torch.as_tensor(self.clf_targets[idx], dtype=torch.float32)
+      return image, mask, clf_target
+
     return image, mask
 
   def get_class_balance(self):

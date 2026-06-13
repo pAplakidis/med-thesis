@@ -121,6 +121,64 @@ def compute_metrics(pred, target, num_classes=len(RGB_COLORS), weights=None):
   return metrics
 
 
+def compute_multilabel_metrics(logits, target, threshold=0.5, ignore_background=True):
+  """
+  logits: (N, C) raw classification logits
+  target: (N, C) binary multi-hot labels
+  """
+  pred = (torch.sigmoid(logits) >= threshold).to(torch.int64)
+  target = target.to(torch.int64)
+
+  if ignore_background and pred.ndim == 2 and pred.shape[1] > 0:
+    pred = pred[:, 1:]
+    target = target[:, 1:]
+
+  pred_np = pred.detach().cpu().numpy()
+  target_np = target.detach().cpu().numpy()
+
+  metrics = {}
+  if pred_np.size == 0:
+    return {
+      "clf_acc": 0.0,
+      "clf_exact_match": 0.0,
+      "clf_precision_micro": 0.0,
+      "clf_recall_micro": 0.0,
+      "clf_f1_micro": 0.0,
+      "clf_precision_macro": 0.0,
+      "clf_recall_macro": 0.0,
+      "clf_f1_macro": 0.0,
+    }
+
+  exact_match = float(np.all(pred_np == target_np, axis=1).mean()) if len(pred_np) > 0 else 0.0
+  acc = float((pred_np == target_np).mean())
+
+  tp = np.logical_and(pred_np == 1, target_np == 1).sum(axis=0).astype(np.float32)
+  fp = np.logical_and(pred_np == 1, target_np == 0).sum(axis=0).astype(np.float32)
+  fn = np.logical_and(pred_np == 0, target_np == 1).sum(axis=0).astype(np.float32)
+
+  eps = 1e-8
+  precision_per_class = tp / (tp + fp + eps)
+  recall_per_class = tp / (tp + fn + eps)
+  f1_per_class = 2 * precision_per_class * recall_per_class / (precision_per_class + recall_per_class + eps)
+
+  tp_sum = float(tp.sum())
+  fp_sum = float(fp.sum())
+  fn_sum = float(fn.sum())
+  precision_micro = tp_sum / (tp_sum + fp_sum + eps)
+  recall_micro = tp_sum / (tp_sum + fn_sum + eps)
+  f1_micro = 2 * precision_micro * recall_micro / (precision_micro + recall_micro + eps)
+
+  metrics["clf_acc"] = acc
+  metrics["clf_exact_match"] = exact_match
+  metrics["clf_precision_micro"] = float(precision_micro)
+  metrics["clf_recall_micro"] = float(recall_micro)
+  metrics["clf_f1_micro"] = float(f1_micro)
+  metrics["clf_precision_macro"] = float(precision_per_class.mean()) if len(precision_per_class) else 0.0
+  metrics["clf_recall_macro"] = float(recall_per_class.mean()) if len(recall_per_class) else 0.0
+  metrics["clf_f1_macro"] = float(f1_per_class.mean()) if len(f1_per_class) else 0.0
+  return metrics
+
+
 def visualize_ct_with_mask(image, mask, alpha=0.5):
   """
   image: torch.Tensor [1,H,W] or numpy [H,W], grayscale CT scan

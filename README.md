@@ -44,6 +44,12 @@ ssh -L 8501:localhost:8501 user@host
 
 Change port to the one that streamlit runs on
 
+### Test
+
+```bash
+python -m  pytest test/test_*
+```
+
 ### Training workflow
 
 - Configure model

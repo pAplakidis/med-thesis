@@ -15,13 +15,26 @@ from utils import *
 from loss.hybrid_segmentation_loss import HybridSegmentationLoss
 
 # TODO: loss is weighted sum, log dice + focal tversky + ce separately
-METRICS = [
+SEG_METRICS = [
   "loss",
+  "seg_loss",
   "pixel_acc",
   "IoU",
   "Dice",
   "F1",
   "Hausdorff",
+]
+
+CLF_METRICS = [
+  "clf_loss",
+  "clf_acc",
+  "clf_exact_match",
+  "clf_precision_micro",
+  "clf_recall_micro",
+  "clf_f1_micro",
+  "clf_precision_macro",
+  "clf_recall_macro",
+  "clf_f1_macro",
 ]
 
 class Trainer:
@@ -54,6 +67,10 @@ class Trainer:
     self.scheduler = None
     self.ema_model = None
     self.early_stopping = early_stopping
+    self.multitask = getattr(self.model, "multitask", False)
+    self.lambda_clf = LAMBDA_CLF
+    self.clf_loss_func = nn.BCEWithLogitsLoss().to(device)
+    self.metric_names = SEG_METRICS + (CLF_METRICS if self.multitask else [])
 
     # compute class weights from per-pixel class balance
     weights = None
@@ -90,22 +107,59 @@ class Trainer:
         self.writer = SummaryWriter(writer_path)
       else:
         self.writer = SummaryWriter(writer_path, purge_step=cast(int, None), max_queue=10, flush_secs=30)
+      self.writer_path = writer_path
     print("[*] Tensorboard output path:", writer_path)
 
-    self.train_metrics = { key: [] for key in METRICS }
-    self.val_metrics = { key: [] for key in METRICS }
+    self.train_metrics = { key: [] for key in self.metric_names }
+    self.val_metrics = { key: [] for key in self.metric_names }
+
+  def _unpack_batch(self, sample_batched):
+    if len(sample_batched) == 2:
+      image_batch, mask_batch = sample_batched
+      return image_batch, mask_batch, None
+    if len(sample_batched) == 3:
+      image_batch, mask_batch, clf_target = sample_batched
+      return image_batch, mask_batch, clf_target
+    raise ValueError(f"Unsupported batch structure with {len(sample_batched)} items")
+
+  def _unpack_output(self, out):
+    if isinstance(out, dict):
+      return out["seg"], out.get("clf")
+    return out, None
+
+  def _mean_metrics(self, metrics_dict):
+    return {name: float(np.mean(values)) if len(values) > 0 else 0.0 for name, values in metrics_dict.items()}
+
+  def _scalar_metrics(self, metrics: dict):
+    return {name: value for name, value in metrics.items() if not isinstance(value, dict)}
 
   def save_onnx(self, example_input: torch.Tensor):
     self.onnx_path = self.model_path.split(".")[0] + ".onnx"
+    model = self.model
+    output_names = ["mask"]
+
+    if getattr(self.model, "multitask", False):
+      class OnnxWrapper(nn.Module):
+        def __init__(self, wrapped_model):
+          super().__init__()
+          self.wrapped_model = wrapped_model
+
+        def forward(self, x):
+          out = self.wrapped_model(x)
+          return out["seg"], out["clf"]
+
+      model = OnnxWrapper(self.model)
+      output_names = ["seg", "clf"]
+
     torch.onnx.export(
-      self.model,
+      model,
       example_input.to(self.device),
       self.onnx_path,
       export_params=True,
       opset_version=18,
       do_constant_folding=True,
       input_names=["image"],
-      output_names=["mask"],
+      output_names=output_names,
     )
     print(f"[+] ONNX model saved at {self.onnx_path}.")
     return self.onnx_path
@@ -160,6 +214,7 @@ class Trainer:
     stop_cnt = checkpoint.get("stop_cnt", 0)
     writer_path = checkpoint.get("writer", None)
     writer = SummaryWriter(writer_path, purge_step=cast(int, None), max_queue=10, flush_secs=30) if writer_path else None
+    self.writer_path = writer_path
 
     optim_state = checkpoint.get("optimizer", None)
     self.optim.load_state_dict(optim_state) if optim_state else None
@@ -176,34 +231,53 @@ class Trainer:
     step: int,
     accumulators: Optional[dict] = None
   ):
-    for name, value in metrics.items():
+    for name, value in self._scalar_metrics(metrics).items():
       self.writer.add_scalar(f"{tag_prefix}/{name}", value, step)
       if accumulators is not None and name in accumulators:
         accumulators[name].append(value)
 
   def train_step(self, t, step, sample_batched, optim):
-    image_batch, mask_batch = sample_batched
+    image_batch, mask_batch, clf_target = self._unpack_batch(sample_batched)
     X = image_batch.to(self.device)
     Y = mask_batch.to(self.device)
+    clf_target = clf_target.to(self.device).float() if clf_target is not None else None
 
-    out = self.model(X)
     optim.zero_grad()
 
-    loss = self.loss_func(out, Y)
-    metrics = compute_metrics(out.detach(), Y.detach(), weights=self.class_weights)
+    out = self.model(X)
+    seg_logits, clf_logits = self._unpack_output(out)
+
+    seg_loss = self.loss_func(seg_logits, Y)
+    loss = seg_loss
+    metrics = compute_metrics(seg_logits.detach(), Y.detach(), weights=self.class_weights)
+
+    current_metrics = {
+      "loss": loss.item(),
+      "seg_loss": seg_loss.item(),
+      **metrics,
+    }
+
+    if clf_logits is not None and clf_target is not None:
+      clf_loss = self.clf_loss_func(clf_logits, clf_target)
+      loss = seg_loss + self.lambda_clf * clf_loss
+      clf_metrics = compute_multilabel_metrics(clf_logits.detach(), clf_target.detach())
+      current_metrics["loss"] = loss.item()
+      current_metrics["clf_loss"] = clf_loss.item()
+      current_metrics.update(clf_metrics)
+
     loss.backward()
     optim.step()
     # if self.scheduler: self.scheduler.step()
     if EMA: self.ema_model.update_parameters(self.model)
 
-    current_metrics = {metric: (loss.item() if metric == "loss" else metrics[metric]) for metric in METRICS}
     self.log_scalars(
       "running train",
       current_metrics,
       step,
       self.epoch_train_metrics
     )
-    t.set_description("[train] " + " | ".join(f"{name}: {value:.4f}" for name, value in current_metrics.items()))
+    scalar_metrics = self._scalar_metrics(current_metrics)
+    t.set_description("[train] " + " | ".join(f"{name}: {value:.4f}" for name, value in scalar_metrics.items()))
 
   def train(self):
     try:
@@ -214,8 +288,8 @@ class Trainer:
 
       print("[*] Training...")
       for epoch in range(self.start_epoch, EPOCHS):
-        self.epoch_train_metrics = {key: [] for key in METRICS}
-        self.epoch_val_metrics = {key: [] for key in METRICS}
+        self.epoch_train_metrics = {key: [] for key in self.metric_names}
+        self.epoch_val_metrics = {key: [] for key in self.metric_names}
 
         self.model.train()
         print(f"\n[=>] Epoch {epoch+1}/{EPOCHS}")
@@ -223,7 +297,7 @@ class Trainer:
           self.train_step(t, step, sample_batched, self.optim)
           step += 1
 
-        avg_metrics = {name: np.mean(values) for name, values in self.epoch_train_metrics.items()}
+        avg_metrics = self._mean_metrics(self.epoch_train_metrics)
         self.log_scalars("epoch training", avg_metrics, epoch, self.train_metrics)
         print("[->] Epoch average training metrics: " + " | ".join(
           f"{name}: {value:.4f}" for name, value in avg_metrics.items()
@@ -254,28 +328,47 @@ class Trainer:
 
     print("[+] Training done")
     print("[*] Generating report ...")
+    report_name = self.model_path.split('.')[0].replace("checkpoints/", '')
     generate_report.main(
       self.onnx_path,
-      f"reports/{self.model_path.split('.')[0].replace("checkpoints/", '')}.json",
+      f"reports/{report_name}.json",
       dataset=self.train_loader.dataset.dataset if isinstance(self.train_loader.dataset, torch.utils.data.Subset) else self.train_loader.dataset
     )
 
   def eval_step(self, t, vstep, sample_batched):
-    X = sample_batched[0].to(self.device)
-    Y = sample_batched[1].to(self.device)
+    image_batch, mask_batch, clf_target = self._unpack_batch(sample_batched)
+    X = image_batch.to(self.device)
+    Y = mask_batch.to(self.device)
+    clf_target = clf_target.to(self.device).float() if clf_target is not None else None
     out = self.ema_model(X) if EMA else self.model(X)
+    seg_logits, clf_logits = self._unpack_output(out)
 
-    loss = self.loss_func(out, Y).mean()
-    metrics = compute_metrics(out.detach(), Y.detach(), weights=self.class_weights)
+    seg_loss = self.loss_func(seg_logits, Y)
+    loss = seg_loss
+    metrics = compute_metrics(seg_logits.detach(), Y.detach(), weights=self.class_weights)
 
-    current_metrics = {metric: (loss.item() if metric == "loss" else metrics[metric]) for metric in METRICS}
+    current_metrics = {
+      "loss": loss.item(),
+      "seg_loss": seg_loss.item(),
+      **metrics,
+    }
+
+    if clf_logits is not None and clf_target is not None:
+      clf_loss = self.clf_loss_func(clf_logits, clf_target)
+      loss = seg_loss + self.lambda_clf * clf_loss
+      clf_metrics = compute_multilabel_metrics(clf_logits.detach(), clf_target.detach())
+      current_metrics["loss"] = loss.item()
+      current_metrics["clf_loss"] = clf_loss.item()
+      current_metrics.update(clf_metrics)
+
     self.log_scalars(
       "running val",
       current_metrics,
       vstep,
       self.epoch_val_metrics
     )
-    t.set_description("[val] " + " | ".join(f"{name}: {value:.4f}" for name, value in current_metrics.items()))
+    scalar_metrics = self._scalar_metrics(current_metrics)
+    t.set_description("[val] " + " | ".join(f"{name}: {value:.4f}" for name, value in scalar_metrics.items()))
 
   def eval(self, vstep, epoch):
     with torch.no_grad():
@@ -284,7 +377,7 @@ class Trainer:
         self.eval_step(t, vstep, sample_batched)
         vstep += 1
 
-      avg_metrics = {name: np.mean(values) for name, values in self.epoch_val_metrics.items()}
+      avg_metrics = self._mean_metrics(self.epoch_val_metrics)
       self.log_scalars("epoch validation", avg_metrics, epoch, self.val_metrics)
       print("[->] Epoch average validation metrics: " + " | ".join(
         f"{name}: {value:.4f}" for name, value in avg_metrics.items()

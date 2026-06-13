@@ -11,7 +11,7 @@ import onnxruntime as ort
 import onnx
 
 from config import *
-from utils import compute_metrics, RGB_COLORS
+from utils import compute_metrics, compute_multilabel_metrics
 from dataset import CTScanDataset
 
 
@@ -47,7 +47,7 @@ def get_gflops(session, input_shape):
 
 
 def predict_single(session, image_tensor):
-  """Run inference on a single image tensor [1, C, H, W], return prediction and timing."""
+  """Run inference on a single image tensor [1, C, H, W], return timing and raw outputs."""
   input_np = image_tensor.numpy().astype(np.float32)
   input_name = session.get_inputs()[0].name
 
@@ -55,8 +55,31 @@ def predict_single(session, image_tensor):
   outputs = session.run(None, {input_name: input_np})
   elapsed = time.perf_counter() - start
 
-  pred = np.argmax(outputs[0], axis=1).squeeze(0)
-  return pred, elapsed, outputs[0]
+  return elapsed, outputs
+
+
+def _resolve_outputs(session, outputs):
+  output_meta = session.get_outputs()
+  output_map = {meta.name: out for meta, out in zip(output_meta, outputs)}
+
+  seg_logits = output_map.get("seg")
+  if seg_logits is None:
+    seg_logits = output_map.get("mask")
+  clf_logits = output_map.get("clf")
+
+  if seg_logits is None:
+    for out in outputs:
+      if out.ndim == 4:
+        seg_logits = out
+        break
+
+  if clf_logits is None:
+    for out in outputs:
+      if out.ndim == 2:
+        clf_logits = out
+        break
+
+  return seg_logits, clf_logits
 
 
 def main(onnx_path, report_path, dataset=None):
@@ -72,6 +95,8 @@ def main(onnx_path, report_path, dataset=None):
 
   print(f"[*] Loading ONNX model from {onnx_path}")
   session = ort.InferenceSession(onnx_path, providers=providers)
+  output_names = [meta.name for meta in session.get_outputs()]
+  is_multitask = "clf" in output_names or len(output_names) > 1
 
   model_size_bytes, param_count = get_model_size(onnx_path)
   print(f"[*] Model size: {model_size_bytes / (1024*1024):.2f} MB")
@@ -79,7 +104,10 @@ def main(onnx_path, report_path, dataset=None):
 
   if dataset is None:
     print(f"[*] Loading dataset from {BASE_DATA_DIR}")
-    dataset = CTScanDataset(BASE_DATA_DIR)
+    dataset = CTScanDataset(BASE_DATA_DIR, clf=is_multitask)
+  elif is_multitask and not getattr(dataset, "clf", False):
+    print("[*] Rebuilding dataset with classification targets for multitask report")
+    dataset = CTScanDataset(dataset.base_dir, clf=True)
 
   train_size = int(TRAIN_SIZE * len(dataset))
   val_size = len(dataset) - train_size
@@ -95,23 +123,53 @@ def main(onnx_path, report_path, dataset=None):
     "loss": [], "pixel_acc": [], "IoU": [], "Dice": [], "F1": [],
     "Hausdorff": [], "w_IoU": [], "w_Dice": [], "w_F1": [], "w_Hausdorff": [],
   }
+  if is_multitask:
+    all_metrics.update({
+      "clf_loss": [],
+      "clf_acc": [],
+      "clf_exact_match": [],
+      "clf_precision_micro": [],
+      "clf_recall_micro": [],
+      "clf_f1_micro": [],
+      "clf_precision_macro": [],
+      "clf_recall_macro": [],
+      "clf_f1_macro": [],
+    })
 
   loss_func = torch.nn.CrossEntropyLoss()
+  clf_loss_func = torch.nn.BCEWithLogitsLoss()
 
   print("[*] Running predictions on full dataset...")
-  for idx, (image, mask) in enumerate(tqdm(dataloader, desc="[*] Predicting")):
+  for idx, sample_batched in enumerate(tqdm(dataloader, desc="[*] Predicting")):
+    if len(sample_batched) == 2:
+      image, mask = sample_batched
+    elif len(sample_batched) == 3:
+      image, mask, _ = sample_batched
+    else:
+      raise ValueError(f"Unsupported batch structure with {len(sample_batched)} items")
     image_path = dataset.images[idx]
     mask_path = dataset.masks[idx]
 
-    pred, elapsed, logits_np = predict_single(session, image)
+    elapsed, outputs = predict_single(session, image)
+    seg_logits_np, clf_logits_np = _resolve_outputs(session, outputs)
 
-    logits = torch.from_numpy(logits_np)
+    logits = torch.from_numpy(seg_logits_np)
     mask_long = mask.long()
 
     metrics = compute_metrics(logits, mask_long, num_classes=dataset.num_classes)
 
     loss = loss_func(logits, mask_long).item()
     metrics["loss"] = loss
+
+    if is_multitask and clf_logits_np is not None and len(sample_batched) == 3:
+      clf_logits = torch.from_numpy(clf_logits_np)
+      clf_target = sample_batched[2].float()
+      if clf_target.ndim == 1:
+        clf_target = clf_target.unsqueeze(0)
+      clf_loss = clf_loss_func(clf_logits, clf_target).item()
+      clf_metrics = compute_multilabel_metrics(clf_logits, clf_target)
+      metrics["clf_loss"] = clf_loss
+      metrics.update(clf_metrics)
 
     for k, v in metrics.items():
       if k in all_metrics:
@@ -134,6 +192,8 @@ def main(onnx_path, report_path, dataset=None):
       "size_bytes": model_size_bytes,
       "param_count": param_count,
       "gflops": None,
+      "multitask": is_multitask,
+      "output_names": output_names,
     },
     "config": {
       "image_size": IMAGE_SIZE,

@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
+import os
+from dataclasses import dataclass
+from typing import Optional, Union
+
 import torch
 import torch.nn as nn
-from enum import Enum
-from dataclasses import dataclass, field
-from typing import Optional
 
 from config import *
 from utils import *
-
-
-# NOTE: Preset definitions for easy experimentation:
-# Tiny (fast training, ~0.1M params): model = UNet(PRESETS["unet_tiny"].to_config())
-# Small (baseline, ~0.5M params):     model = UNet(PRESETS["unet_small"].to_config())
-# Base (default, ~2M params):         model = UNet(PRESETS["unet_base"].to_config())
-# Large (deeper, ~8M params):         model = UNet(PRESETS["unet_large"].to_config())
-# XL (largest, ~30M params):          model = UNet(PRESETS["unet_xl"].to_config())
+from models.presets import PRESETS, Preset
 
 @dataclass
 class UnetConfig:
@@ -30,78 +24,6 @@ class UnetConfig:
   dropout: float = 0.0
   use_batch_norm: bool = True
   activation: str = "relu"
-
-
-@dataclass
-class Preset:
-  name: str
-  in_channels: int = 1
-  num_classes: int = 9
-  base_features: int = 64
-  depth: int = 4
-  convs_per_block: int = 2
-  use_residual: bool = False
-  use_attention: bool = False
-  dropout: float = 0.0
-  use_batch_norm: bool = True
-  activation: str = "relu"
-
-  def to_config(self) -> UnetConfig:
-    return UnetConfig(
-      in_channels=self.in_channels,
-      num_classes=self.num_classes,
-      base_features=self.base_features,
-      depth=self.depth,
-      convs_per_block=self.convs_per_block,
-      use_residual=self.use_residual,
-      use_attention=self.use_attention,
-      dropout=self.dropout,
-      use_batch_norm=self.use_batch_norm,
-      activation=self.activation,
-    )
-
-
-PRESETS = {
-  "unet_tiny": Preset(
-    name="unet_tiny",
-    base_features=16,
-    depth=3,
-    convs_per_block=2,
-  ),
-  "unet_small": Preset(
-    name="unet_small",
-    base_features=32,
-    depth=4,
-    convs_per_block=2,
-  ),
-  "unet_base": Preset(
-    name="unet_base",
-    base_features=64,
-    depth=4,
-    convs_per_block=2,
-  ),
-  "unet_large": Preset(
-    name="unet_large",
-    base_features=128,
-    depth=5,
-    convs_per_block=3,
-  ),
-  "unet_large_plus": Preset(
-    name="unet_large_plus",
-    base_features=144,
-    depth=5,
-    convs_per_block=3,
-  ),
-  "unet_xl": Preset(
-    name="unet_xl_attn_res",
-    base_features=256,
-    depth=5,
-    convs_per_block=3,
-    use_residual=True,
-    use_attention=True,
-    dropout=0.1,
-  ),
-}
 
 
 class ConvBlock(nn.Module):
@@ -223,14 +145,25 @@ class DoubleConv(nn.Module):
 
 
 class UNet(nn.Module):
-  def __init__(self, config: Optional[UnetConfig] = None, **kwargs):
+  def __init__(
+    self,
+    config: Optional[UnetConfig] = None,
+    multitask: bool = False,
+    num_labels: Optional[int] = None,
+    clf_dropout: float = 0.0,
+    freeze_encoder: bool = False,
+    freeze_decoder: bool = False,
+    **kwargs,
+  ):
     super().__init__()
     if config is None:
       config = UnetConfig(**kwargs)
 
     self.config = config
+    self.multitask = multitask
     self.in_channels = config.in_channels
     self.num_classes = config.num_classes
+    self.num_labels = num_labels if num_labels is not None else self.num_classes
     self.base_features = config.base_features
     self.depth = config.depth
     self.convs_per_block = config.convs_per_block
@@ -238,6 +171,7 @@ class UNet(nn.Module):
     features = self.base_features
     self.down = nn.ModuleList()
     self.pool = nn.MaxPool2d(2)
+    self.bottleneck_channels = None
 
     in_ch = self.in_channels
     for _ in range(self.depth):
@@ -254,6 +188,7 @@ class UNet(nn.Module):
       in_ch = features
       features *= 2
 
+    self.bottleneck_channels = features
     self.bottleneck = DoubleConv(
       in_ch,
       features,
@@ -282,8 +217,48 @@ class UNet(nn.Module):
       )
 
     self.final = nn.Conv2d(self.base_features, self.num_classes, 1)
+    self.clf_head = None
+    if self.multitask:
+      clf_layers = [
+        nn.AdaptiveAvgPool2d(1),
+        nn.Flatten(),
+      ]
+      if clf_dropout > 0:
+        clf_layers.append(nn.Dropout(clf_dropout))
+      clf_layers.append(nn.Linear(self.bottleneck_channels, self.num_labels))
+      self.clf_head = nn.Sequential(*clf_layers)
 
-  def forward(self, x):
+    if freeze_encoder:
+      self.set_encoder_trainable(False)
+    if freeze_decoder:
+      self.set_decoder_trainable(False)
+
+  def set_encoder_trainable(self, trainable: bool):
+    for module in [self.down, self.bottleneck]:
+      for param in module.parameters():
+        param.requires_grad = trainable
+
+  def set_decoder_trainable(self, trainable: bool):
+    modules = [self.up, self.final]
+    if self.attention is not None:
+      modules.append(self.attention)
+    for module in modules:
+      for param in module.parameters():
+        param.requires_grad = trainable
+
+  def load_unet_weights(self, checkpoint: Union[str, os.PathLike, dict], strict: bool = False, map_location: str = "cpu"):
+    if isinstance(checkpoint, (str, os.PathLike)):
+      checkpoint = torch.load(checkpoint, map_location=map_location)
+    if isinstance(checkpoint, dict) and "model" in checkpoint and isinstance(checkpoint["model"], dict):
+      state_dict = checkpoint["model"]
+    elif isinstance(checkpoint, dict):
+      state_dict = checkpoint
+    else:
+      raise TypeError("checkpoint must be a path or state dict")
+
+    return self.load_state_dict(state_dict, strict=strict)
+
+  def encode(self, x):
     skips = []
     for block in self.down:
       x = block(x)
@@ -291,7 +266,9 @@ class UNet(nn.Module):
       x = self.pool(x)
 
     x = self.bottleneck(x)
+    return x, skips
 
+  def decode(self, x, skips):
     for i in range(0, len(self.up), 2):
       x = self.up[i](x)
       skip = skips.pop()
@@ -302,6 +279,17 @@ class UNet(nn.Module):
       x = self.up[i + 1](x)
 
     return self.final(x)
+
+  def forward(self, x):
+    x, skips = self.encode(x)
+    seg = self.decode(x, skips)
+    if not self.multitask:
+      return seg
+    clf = self.clf_head(x)
+    return {
+      "seg": seg,
+      "clf": clf,
+    }
 
 
 def count_parameters(model: nn.Module) -> int:

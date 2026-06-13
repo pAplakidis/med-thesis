@@ -6,6 +6,7 @@ def print_config(config):
   print(f"Image size: {config['image_size']} - Norm mean: {config['norm_mean']} - Norm std: {config['norm_std']}")
   print(f"Train size: {config['train_size']} - Epochs: {config['epochs']} - Batch size: {config['batch_size']}")
   print(f"Learning rate: {config['lr']} - LR factor: {config['lr_factor']} - Weight decay: {config['weight_decay']}")
+  print(f"Lambda clf: {config.get('lambda_clf', 1.0)}")
   print(f"LR patience: {config['lr_patience']} - Early stop epochs: {config['early_stop_epochs']}")
   print()
 
@@ -31,5 +32,6 @@ with open("configs/main.json", "r") as f:
   LAMBDA_FT = config.get("lambda_ft", 0.5)
   LAMBDA_GD = config.get("lambda_gd", 0.3)
   LAMBDA_CE = config.get("lambda_ce", 0.2)
+  LAMBDA_CLF = config.get("lambda_clf", 1.0)
 
   print_config(config)

@@ -16,6 +16,7 @@ from models.unet import UNet, PRESETS
 MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/unet.pt")
 CHECKPOINT = os.getenv("CHECKPOINT", None)
 WRITER_PATH = os.getenv("WRITER_PATH", None)
+MULTITASK = os.getenv("MULTITASK", "0").lower() in ("1", "true", "yes")
 
 N_WORKERS = psutil.cpu_count(logical=False)
 PREFETCH_FACTOR = psutil.cpu_count(logical=False) // 2
@@ -34,13 +35,14 @@ if __name__ == "__main__":
   os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
   print("\n[*] Train configuration:")
   print(f"Model path: {MODEL_PATH}")
+  print(f"Multitask: {MULTITASK}")
   print(f"Checkpoint path: {CHECKPOINT}")
   print(f"Number of workers: {N_WORKERS} - Prefetch factor: {PREFETCH_FACTOR}")
   print(f"EMA: {EMA} - Pin memory: {PIN_MEMORY}")
   print()
 
-  dataset = CTScanDataset(BASE_DATA_DIR)
-  labels = dataset.get_multilabel_targets()
+  dataset = CTScanDataset(BASE_DATA_DIR, clf=MULTITASK)
+  labels = dataset.clf_targets if MULTITASK and dataset.clf_targets is not None else dataset.get_multilabel_targets()
   msss = MultilabelStratifiedShuffleSplit(n_splits=1, test_size=VAL_SIZE,random_state=42)
   train_idx, val_idx = next(msss.split(np.zeros(len(labels)), labels))
   train_set = Subset(dataset, train_idx)
@@ -68,7 +70,7 @@ if __name__ == "__main__":
 
   # model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
   #                         in_channels=1, out_channels=dataset.num_classes, init_features=32, pretrained=False)
-  model = UNet(PRESETS["unet_base"].to_config())
+  model = UNet(PRESETS["unet_base"].to_config(), multitask=MULTITASK, num_labels=dataset.num_classes)
   model.to(device)
 
   trainer = Trainer(
